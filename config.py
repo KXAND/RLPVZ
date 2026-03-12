@@ -34,7 +34,7 @@ class BotConfig:
     # ========================================================================
     
     # Game speed multiplier (e.g., 2.0 for double speed)
-    game_speed: float = 1.0
+    game_speed: float = 10.0
     
     # Whether to automatically plant
     auto_plant: bool = True

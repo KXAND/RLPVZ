@@ -13,7 +13,7 @@ game:
   cols: 9                       # 列数
   initial_sun: 50               # 初始阳光
   # 游戏可执行文件路径 (用于自动重启，如果游戏崩溃)
-  exe_path: "C:/Users/joyto/Desktop/Pvz/TranfsormerPVZ/gameobj/PlantsVsZombies.exe"
+  exe_path: "C:/GitLibrary/TranfsormerPVZ/gameobj/PlantsVsZombies.exe"
 
 # =============================================================================
 # 卡槽配置 (10张卡)
@@ -164,8 +164,8 @@ rewards:
     buckethead: 4.0
 
   sun_collect: 0.02             # 收集阳光 (提升，保证经济)
-  wave_complete: 50.0           # 完成一波 (大幅提升)
-  game_win: 100.0               # 通关
+  wave_complete: 100.0           # 完成一波 (大幅提升)
+  game_win: 200.0               # 通关
   streak_bonus: 20.0            # 连胜奖励 (大幅提升，鼓励连续胜利)
   survival_per_step: 0.0        # 存活奖励 (移除，防止苟活)
 
@@ -177,7 +177,7 @@ rewards:
   # 负向惩罚 - 小推车是关键！
   plant_lost: -0.5              # 植物被吃 (适当提高惩罚，避免随意牺牲)
   sunflower_lost: -1.0          # 向日葵被吃 (提高惩罚，保护经济)
-  lawnmower_triggered: -10.0    # 小推车触发 (适当惩罚)
+  lawnmower_triggered: -50.0    # 小推车触发 (适当惩罚)
   game_lose: -50.0              # 游戏失败 (极大惩罚，让AI明白"死"比"丢植物"更可怕)
   invalid_action: -0.005        # 无效操作 (降低惩罚，避免因系统误差导致AI不敢动)
 
@@ -202,8 +202,8 @@ training:
   # PPO 超参数 (最大化GPU利用率)
   ppo:
     learning_rate: 0.0003
-    n_steps: 512                # 更小的采集批次，更频繁更新
-    batch_size: 512             # batch_size = n_steps，一次处理全部
+    n_steps: 256                # 更小的采集批次，更频繁更新
+    batch_size: 256             # batch_size = n_steps，一次处理全部
     n_epochs: 20                # 增加epoch，让GPU多训练几轮
     gamma: 0.99
     gae_lambda: 0.95

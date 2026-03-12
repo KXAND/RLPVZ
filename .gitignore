@@ -11,6 +11,8 @@ logs/
 models/*.zip
 models/*.pth
 crash.txt
+heatmap.html
+
 
 # OS
 .DS_Store
@@ -18,3 +20,9 @@ Thumbs.db
 
 # VS Code
 .vscode/
+
+# bin
+PvZ_Toolkit_v1.22.0
+v5ProcessManager
+gameobj
+

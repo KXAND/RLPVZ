@@ -1211,6 +1211,10 @@ def get_args():
 
     parser = argparse.ArgumentParser(description="高级 PVZ 训练 (含三大优化)")
 
+    parser.add_argument("--algo", type=str, default="ppo", choices=["ppo", "ddqn"], help="训练算法")
+    from models.ddqn.train_entry import add_ddqn_args
+    add_ddqn_args(parser)
+
     # 基础参数 - 稳定配置，适合初期训练
     parser.add_argument("--timesteps", "-t", type=int, default=500000, help="训练步数")
     parser.add_argument(
@@ -1607,6 +1611,11 @@ def main():
     print_config(args)
 
     if not auto_start_game_if_needed(args):
+        return
+
+    if args.algo == "ddqn":
+        from models.ddqn.train_entry import train_ddqn
+        train_ddqn(args)
         return
 
     load_path = resolve_load_path(args)

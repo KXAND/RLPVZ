@@ -10,6 +10,8 @@ ENV/
 logs/
 models/*.zip
 models/*.pth
+models/*.pt
+models/*.pkl
 crash.txt
 heatmap.html
 

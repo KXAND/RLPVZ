@@ -1,60 +1,6 @@
 import os
 
 
-def add_ddqn_args(parser):
-    group = parser.add_argument_group("DDQN")
-    group.add_argument("--ddqn_episodes", type=int, default=200000, help="DDQN episodes")
-    group.add_argument("--ddqn_gamma", type=float, default=0.99, help="DDQN gamma")
-    group.add_argument(
-        "--ddqn_batch_size", type=int, default=32, help="DDQN batch size"
-    )
-    group.add_argument(
-        "--ddqn_buffer_size", type=int, default=50000, help="DDQN replay buffer size"
-    )
-    group.add_argument(
-        "--ddqn_burn_in", type=int, default=10000, help="DDQN burn-in steps"
-    )
-    group.add_argument(
-        "--ddqn_lr", type=float, default=1e-3, help="DDQN learning rate"
-    )
-    group.add_argument(
-        "--ddqn_update_freq",
-        type=int,
-        default=32,
-        help="DDQN network update frequency",
-    )
-    group.add_argument(
-        "--ddqn_sync_freq",
-        type=int,
-        default=2000,
-        help="DDQN target sync frequency",
-    )
-    group.add_argument(
-        "--ddqn_eval_freq",
-        type=int,
-        default=20,
-        help="DDQN evaluation frequency (episodes)",
-    )
-    group.add_argument(
-        "--ddqn_eval_iters",
-        type=int,
-        default=5,
-        help="DDQN evaluation iterations",
-    )
-    group.add_argument(
-        "--ddqn_save_path",
-        type=str,
-        default="models/ddqn_model.pt",
-        help="DDQN model save path",
-    )
-    group.add_argument(
-        "--ddqn_load_path",
-        type=str,
-        default=None,
-        help="DDQN model load path",
-    )
-
-
 def _build_ddqn_env(args):
     from envs import PVZEnv
     from .adapter import DDQNEnvAdapter

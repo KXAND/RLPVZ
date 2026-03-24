@@ -11,6 +11,7 @@ import yaml
 import time
 import logging
 import os
+from utils.logger import write_file_line
 
 from hook_client import HookClient
 from hook_client.injector import find_pvz_process, inject_dll, list_pvz_processes
@@ -98,6 +99,7 @@ class PVZEnv(gym.Env):
         hook_port: int = 12345,  # Hook DLL 端口（多实例时指定不同端口）
         target_pid: Optional[int] = None,  # 绑定到指定 PVZ 进程
         verbose: int = 1,  # 日志级别: 0=静默, 1=关键信息, 2=详细调试
+        log_verbose: int = 1,  # 文件日志级别: 0=静默, 1=关键信息, 2=详细调试
     ):
         """
         初始化环境
@@ -120,6 +122,7 @@ class PVZEnv(gym.Env):
         self.hook_port = hook_port  # 保存端口
         self.target_pid = target_pid
         self.verbose = verbose  # 日志级别
+        self.log_verbose = log_verbose
         
         # 加载配置
         self._load_config(config_path)
@@ -246,6 +249,20 @@ class PVZEnv(gym.Env):
         self._episode_win = None  # 回合是否胜利
         self._victory_printed = False  # 是否已打印胜利信息
         self._no_zombie_steps = 0  # 连续无僵尸的步数
+
+    def _should_console(self, level: int) -> bool:
+        return self.verbose >= level
+
+    def _should_log(self, level: int) -> bool:
+        return self.log_verbose >= level
+
+    def _emit(self, message: str, console_level: int = 1, log_level: Optional[int] = None):
+        effective_log_level = console_level if log_level is None else log_level
+        if self._should_console(console_level):
+            print(message)
+            return
+        if self._should_log(effective_log_level):
+            write_file_line(message)
         
     def _load_config(self, config_path: str):
         """加载配置文件"""
@@ -268,11 +285,11 @@ class PVZEnv(gym.Env):
         # 防止频繁重启 (至少间隔 30 秒)
         now = time.time()
         if now - self._last_restart_time < 30:
-            print(f"[DEBUG] 距离上次重启不足30秒，跳过")
+            self._emit("[DEBUG] 距离上次重启不足30秒，跳过", console_level=2, log_level=2)
             return False
         self._last_restart_time = now
 
-        print(f"[DEBUG] 尝试重启 PVZ 游戏...")
+        self._emit("[DEBUG] 尝试重启 PVZ 游戏...", console_level=2, log_level=1)
 
         # 先关闭现有连接
         if self.hook_client:
@@ -286,43 +303,43 @@ class PVZEnv(gym.Env):
         if pid is None:
             pid = find_pvz_process()
         if pid:
-            print(f"[DEBUG] PVZ 进程存在 (PID={pid})，尝试重新注入 DLL...")
+            self._emit(f"[DEBUG] PVZ 进程存在 (PID={pid})，尝试重新注入 DLL...", console_level=2, log_level=1)
         else:
             # 游戏不在运行，尝试启动
             if self.pvz_exe_path and os.path.exists(self.pvz_exe_path):
-                print(f"[DEBUG] 启动游戏: {self.pvz_exe_path}")
+                self._emit(f"[DEBUG] 启动游戏: {self.pvz_exe_path}", console_level=2, log_level=1)
                 try:
                     subprocess.Popen([self.pvz_exe_path], cwd=os.path.dirname(self.pvz_exe_path))
                     # 等待游戏启动
                     for _ in range(30):  # 最多等待 30 秒
                         time.sleep(1)
                         if self._is_pvz_running():
-                            print(f"[DEBUG] 游戏已启动!")
+                            self._emit("[DEBUG] 游戏已启动!", console_level=2, log_level=1)
                             break
                     else:
-                        print(f"[DEBUG] 游戏启动超时!")
+                        self._emit("[DEBUG] 游戏启动超时!", console_level=1, log_level=1)
                         return False
                 except Exception as e:
-                    print(f"[DEBUG] 启动游戏失败: {e}")
+                    self._emit(f"[DEBUG] 启动游戏失败: {e}", console_level=1, log_level=1)
                     return False
             else:
-                print(f"[DEBUG] 游戏路径未配置或不存在: {self.pvz_exe_path}")
-                print(f"[DEBUG] 请在 config/training_config.yaml 中设置 game.exe_path")
+                self._emit(f"[DEBUG] 游戏路径未配置或不存在: {self.pvz_exe_path}", console_level=1, log_level=1)
+                self._emit("[DEBUG] 请在 config/training_config.yaml 中设置 game.exe_path", console_level=1, log_level=1)
                 return False
 
         # 等待游戏完全加载
         time.sleep(3)
 
         # 注入 DLL
-        print(f"[DEBUG] 注入 Hook DLL...")
+        self._emit("[DEBUG] 注入 Hook DLL...", console_level=2, log_level=1)
         if not inject_dll(pid=pid, port=self.hook_port):
-            print(f"[DEBUG] DLL 注入失败!")
+            self._emit("[DEBUG] DLL 注入失败!", console_level=1, log_level=1)
             return False
 
         # 等待 DLL 初始化
         time.sleep(2)
 
-        print(f"[DEBUG] 重启完成!")
+        self._emit("[DEBUG] 重启完成!", console_level=2, log_level=1)
         return True
     
     def _connect(self, max_retries: int = 3) -> bool:
@@ -331,34 +348,38 @@ class PVZEnv(gym.Env):
             self.hook_client = HookClient(port=self.hook_port, timeout=10.0)  # 增加超时到10秒
 
         if not self.hook_client.connected:
-            print(f"[PVZEnv] 正在连接 Hook DLL (port: {self.hook_port})...")
+            self._emit(f"[PVZEnv] 正在连接 Hook DLL (port: {self.hook_port})...", console_level=1, log_level=1)
 
             # 重试连接
             for attempt in range(max_retries):
                 if self.hook_client.connect():
-                    print(f"[PVZEnv] Hook 连接成功 (port: {self.hook_port})!")
+                    self._emit(f"[PVZEnv] Hook 连接成功 (port: {self.hook_port})!", console_level=1, log_level=1)
                     break
 
                 if attempt < max_retries - 1:
                     wait_time = (attempt + 1) * 2  # 2秒, 4秒, 6秒...
-                    print(f"[PVZEnv] 连接失败，{wait_time}秒后重试 ({attempt + 1}/{max_retries})...")
+                    self._emit(
+                        f"[PVZEnv] 连接失败，{wait_time}秒后重试 ({attempt + 1}/{max_retries})...",
+                        console_level=1,
+                        log_level=1,
+                    )
                     time.sleep(wait_time)
             else:
                 # 所有重试都失败，尝试自动重启游戏
-                print(f"[PVZEnv] 连接失败，尝试自动重启游戏...")
+                self._emit("[PVZEnv] 连接失败，尝试自动重启游戏...", console_level=1, log_level=1)
                 if self._restart_pvz():
                     # 重启成功，重新创建客户端并连接
                     self.hook_client = HookClient(port=self.hook_port, timeout=10.0)
                     if self.hook_client.connect():
-                        print(f"[PVZEnv] 重启后连接成功!")
+                        self._emit("[PVZEnv] 重启后连接成功!", console_level=1, log_level=1)
                     else:
-                        print(f"[PVZEnv] ERROR: 重启后仍无法连接!")
+                        self._emit("[PVZEnv] ERROR: 重启后仍无法连接!", console_level=1, log_level=1)
                         return False
                 else:
-                    print(f"[PVZEnv] ERROR: 无法连接到 Hook DLL (port: {self.hook_port})!")
-                    print("[PVZEnv] 请确保:")
-                    print("  1. PVZ 游戏已启动")
-                    print("  2. 已运行 python inject.py 注入 DLL")
+                    self._emit(f"[PVZEnv] ERROR: 无法连接到 Hook DLL (port: {self.hook_port})!", console_level=1, log_level=1)
+                    self._emit("[PVZEnv] 请确保:", console_level=1, log_level=1)
+                    self._emit("  1. PVZ 游戏已启动", console_level=1, log_level=1)
+                    self._emit("  2. 已运行 python inject.py 注入 DLL", console_level=1, log_level=1)
                     return False
         
         if self.pvz is None:
@@ -368,15 +389,12 @@ class PVZEnv(gym.Env):
                 target_pid=self.target_pid,
             )
             if not self.pvz.attach():
-                if self.verbose >= 1:
-                    print("[PVZEnv] 错误: 无法附加到PVZ进程")
+                self._emit("[PVZEnv] 错误: 无法附加到PVZ进程", console_level=1, log_level=1)
                 return False
         elif not self.pvz.is_attached():
-            if self.verbose >= 2:
-                print("[PVZEnv] 重新附加进程...")
+            self._emit("[PVZEnv] 重新附加进程...", console_level=2, log_level=2)
             if not self.pvz.attach():
-                if self.verbose >= 1:
-                    print("[PVZEnv] 错误: 重新附加失败")
+                self._emit("[PVZEnv] 错误: 重新附加失败", console_level=1, log_level=1)
                 return False
         
         return True
@@ -397,8 +415,7 @@ class PVZEnv(gym.Env):
                 target_pid=self.target_pid,
             )
             if not self.pvz.attach():
-                if self.verbose >= 1:
-                    print("[PVZEnv] 错误: 无法附加到PVZ进程")
+                self._emit("[PVZEnv] 错误: 无法附加到PVZ进程", console_level=1, log_level=1)
                 return False
         
         return True
@@ -535,11 +552,13 @@ class PVZEnv(gym.Env):
                 time.sleep(0.1)
                 state = self.pvz.get_game_state()
                 current_sun = state.sun if state else -1
-                if self.verbose >= 1:
-                    print(f"[PVZEnv] 初始阳光设置: 目标={self.initial_sun}, 实际={current_sun}")
+                self._emit(
+                    f"[PVZEnv] 初始阳光设置: 目标={self.initial_sun}, 实际={current_sun}",
+                    console_level=1,
+                    log_level=1,
+                )
             else:
-                if self.verbose >= 1:
-                    print(f"[PVZEnv] 警告: 设置初始阳光失败")
+                self._emit("[PVZEnv] 警告: 设置初始阳光失败", console_level=1, log_level=1)
 
         # 设置游戏速度
         if self.game_speed != 1.0:
@@ -607,26 +626,34 @@ class PVZEnv(gym.Env):
         # 轻量级保活：如果 Hook/TCP 断开或附加丢失，尝试即时重连/重新附加
         if self.hook_client:
             if not self.hook_client.connected:
-                print(f"[DEBUG] Step {self.steps}: Hook连接断开，尝试重连...")
+                self._emit(
+                    f"[DEBUG] Step {self.steps}: Hook连接断开，尝试重连...",
+                    console_level=2,
+                    log_level=1,
+                )
                 # 等待一小段时间再重连，避免立即重试失败
                 time.sleep(0.5)
                 for retry in range(3):
-                    print(f"[DEBUG] 重连尝试 {retry + 1}/3...")
+                    self._emit(f"[DEBUG] 重连尝试 {retry + 1}/3...", console_level=2, log_level=2)
                     if self.hook_client.connect():
-                        print(f"[DEBUG] Hook重连成功!")
+                        self._emit("[DEBUG] Hook重连成功!", console_level=2, log_level=1)
                         break
-                    print(f"[DEBUG] 重连失败，等待1秒...")
+                    self._emit("[DEBUG] 重连失败，等待1秒...", console_level=2, log_level=2)
                     time.sleep(1.0)
                 else:
-                    print(f"[DEBUG] 3次重连均失败!")
+                    self._emit("[DEBUG] 3次重连均失败!", console_level=1, log_level=1)
 
         if self.pvz and not self.pvz.is_attached():
-            print(f"[DEBUG] Step {self.steps}: 游戏进程附加丢失，尝试重新附加...")
+            self._emit(
+                f"[DEBUG] Step {self.steps}: 游戏进程附加丢失，尝试重新附加...",
+                console_level=2,
+                log_level=1,
+            )
             time.sleep(0.5)
             if self.pvz.attach():
-                print(f"[DEBUG] 进程重新附加成功!")
+                self._emit("[DEBUG] 进程重新附加成功!", console_level=2, log_level=1)
             else:
-                print(f"[DEBUG] 进程重新附加失败!")
+                self._emit("[DEBUG] 进程重新附加失败!", console_level=1, log_level=1)
 
         self.steps += 1
         reward = 0.0
@@ -669,10 +696,18 @@ class PVZEnv(gym.Env):
         # 自动收集阳光 - 每步都收集，高速下防止漏收
         if self.hook_client:
             res = self.hook_client.collect()
-            if self.verbose >= 1 and res > 0:
-                print(f"[PVZEnv] Step {self.steps}: 收集了 {res} 个物品")
-            elif self.verbose >= 2:
-                print(f"[PVZEnv] Step {self.steps}: collect() returned {res}")
+            if res > 0:
+                self._emit(
+                    f"[PVZEnv] Step {self.steps}: 收集了 {res} 个物品",
+                    console_level=1,
+                    log_level=1,
+                )
+            else:
+                self._emit(
+                    f"[PVZEnv] Step {self.steps}: collect() returned {res}",
+                    console_level=2,
+                    log_level=2,
+                )
         
 
 
@@ -690,10 +725,17 @@ class PVZEnv(gym.Env):
         else:
             # [调试] 输出关键状态
             level_end_cd = getattr(game_state, 'level_end_countdown', -999)
-            if self.verbose >= 2 or (self.steps % 50 == 0 and self.verbose >= 1):
-                print(f"[Step {self.steps}] wave={game_state.wave}/{game_state.total_waves}, level_end_countdown={level_end_cd}, zombies={len(game_state.zombies)}")
-                if self.verbose >= 2:
-                    print(f"  game_state类型={type(game_state).__name__}, 有level_end_countdown属性={hasattr(game_state, 'level_end_countdown')}")
+            if self.steps % 50 == 0 or self.verbose >= 2 or self.log_verbose >= 2:
+                self._emit(
+                    f"[Step {self.steps}] wave={game_state.wave}/{game_state.total_waves}, level_end_countdown={level_end_cd}, zombies={len(game_state.zombies)}",
+                    console_level=1,
+                    log_level=1,
+                )
+                self._emit(
+                    f"  game_state类型={type(game_state).__name__}, 有level_end_countdown属性={hasattr(game_state, 'level_end_countdown')}",
+                    console_level=2,
+                    log_level=2,
+                )
             
             # 计算奖励
             r_compute, compute_details, potential = self._compute_reward_debug(game_state)
@@ -735,9 +777,13 @@ class PVZEnv(gym.Env):
             truncated = True
 
         # 如果本步截断或终止，打印一次原因（便于定位4000步附近的停顿）
-        if (terminated or truncated) and self.verbose >= 2:
+        if terminated or truncated:
             reason = "状态读取失败" if game_state is None else "达到最大步数" if self.steps >= self.max_steps else "其他"
-            print(f"[调试] 回合结束: {reason} (步数={self.steps}, 终止={terminated}, 截断={truncated})")
+            self._emit(
+                f"[调试] 回合结束: {reason} (步数={self.steps}, 终止={terminated}, 截断={truncated})",
+                console_level=2,
+                log_level=2,
+            )
         
         self.total_reward += reward
         
@@ -747,15 +793,17 @@ class PVZEnv(gym.Env):
         for k, v in step_reward_details.items():
             self._episode_reward_stats[k] = self._episode_reward_stats.get(k, 0.0) + v
             
-        # 打印本局总结（仅在 verbose >= 1 时显示）
-        if (terminated or truncated) and self.verbose >= 1:
-            print(f"[回合结束] 总奖励: {self.total_reward:.1f}, 步数: {self.steps}")
-            if self.verbose >= 2:
-                # 详细模式：显示奖励详情
-                sorted_stats = sorted(self._episode_reward_stats.items(), key=lambda x: abs(x[1]), reverse=True)
-                for k, v in sorted_stats:
-                    if abs(v) > 0.1:
-                        print(f"   {k}: {v:.1f}")
+        # 打印本局总结
+        if terminated or truncated:
+            self._emit(
+                f"[回合结束] 总奖励: {self.total_reward:.1f}, 步数: {self.steps}",
+                console_level=1,
+                log_level=1,
+            )
+            sorted_stats = sorted(self._episode_reward_stats.items(), key=lambda x: abs(x[1]), reverse=True)
+            for k, v in sorted_stats:
+                if abs(v) > 0.1:
+                    self._emit(f"   {k}: {v:.1f}", console_level=2, log_level=2)
             self._episode_reward_stats = {}  # 重置
         
         # 传入已获取的 game_state，避免重复读取

@@ -144,6 +144,14 @@ def get_logger(name: str = "PVZ", level: LogLevel = LogLevel.INFO, file_path: Op
     return _global_logger
 
 
+def write_file_line(message: str) -> None:
+    """Write a plain message to the active log file without console output."""
+    if _global_logger and _global_logger._file:
+        timestamp = time.strftime("%H:%M:%S")
+        _global_logger._file.write(f"[{timestamp}] {message}\n")
+        _global_logger._file.flush()
+
+
 def status_line(message: str, end: str = ""):
     """Print a status line (overwrites current line)"""
     sys.stdout.write(f"\r{message}" + " " * 20 + end)

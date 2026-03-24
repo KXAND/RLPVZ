@@ -21,7 +21,7 @@ def get_args():
     common.add_argument(
         "--num_envs",
         type=int,
-        default=10,
+        default=4,
         help="并行环境数量，对应多个 PVZ 进程",
     )
     common.add_argument(
@@ -61,11 +61,22 @@ def get_args():
         "--wait_time", type=float, default=3.0, help="游戏启动等待时间 (秒)"
     )
     common.add_argument(
+        "--env_console_log_level",
         "--env_verbose",
+        dest="env_console_log_level",
         type=int,
         default=0,
         choices=[0, 1, 2],
-        help="环境日志级别: 0=静默, 1=关键信息, 2=详细调试",
+        help="环境控制台日志级别: 0=静默, 1=关键信息, 2=详细调试",
+    )
+    common.add_argument(
+        "--file_log_level",
+        "--log_verbose",
+        dest="file_log_level",
+        type=int,
+        default=1,
+        choices=[0, 1, 2],
+        help="文件日志级别: 0=静默, 1=关键信息, 2=详细调试",
     )
 
     # PPO 参数
@@ -201,6 +212,12 @@ def add_ddqn_args(group):
         type=int,
         default=5,
         help="DDQN evaluation iterations",
+    )
+    group.add_argument(
+        "--ddqn_checkpoint_freq",
+        type=int,
+        default=500,
+        help="DDQN checkpoint 保存频率（按 episode 计，0 表示禁用）",
     )
     group.add_argument(
         "--ddqn_save_path",

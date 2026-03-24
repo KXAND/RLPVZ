@@ -17,7 +17,8 @@ def _build_ddqn_env(args, instance=None):
         target_pid=instance["pid"],
         game_speed=args.speed,
         frame_skip=args.frameskip,
-        verbose=args.env_verbose,
+        verbose=args.env_console_log_level,
+        log_verbose=args.file_log_level,
     )
     return DDQNEnvAdapter(env)
 
@@ -37,6 +38,7 @@ def train_ddqn(args):
     network = QNetwork(env, learning_rate=args.ddqn_lr, device=device)
 
     if args.ddqn_load_path and os.path.exists(args.ddqn_load_path):
+        print(f"加载 DDQN 模型: {args.ddqn_load_path}")
         state_dict = torch.load(args.ddqn_load_path, map_location=device)
         network.load_state_dict(state_dict)
 
@@ -51,6 +53,5 @@ def train_ddqn(args):
             evaluate_n_iter=args.ddqn_eval_iters,
         )
     finally:
-        os.makedirs(os.path.dirname(args.ddqn_save_path) or ".", exist_ok=True)
-        torch.save(network.state_dict(), args.ddqn_save_path)
+        train_utils.save_runtime_checkpoint(args, network=network)
         env.close()

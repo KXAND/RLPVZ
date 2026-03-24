@@ -6,6 +6,7 @@ from copy import deepcopy
 import numpy as np
 import torch
 import torch.nn as nn
+import train_utils
 
 from ..threshold import Threshold
 from .ddqn import QNetwork, copy_state_dict_to_cpu, experienceReplayBuffer
@@ -20,7 +21,8 @@ def _build_worker_env(args, instance):
         target_pid=instance["pid"],
         game_speed=args.speed,
         frame_skip=args.frameskip,
-        verbose=args.env_verbose,
+        verbose=args.env_console_log_level,
+        log_verbose=args.file_log_level,
     )
     return DDQNEnvAdapter(env)
 
@@ -55,6 +57,9 @@ def ddqn_worker_main(
 ):
     env = None
     try:
+        import train_utils
+
+        train_utils.setup_worker_logging(args)
         env = _build_worker_env(args, instance)
         network = QNetwork(env, learning_rate=args.ddqn_lr, device="cpu")
         network.load_state_dict(initial_state_dict)
@@ -209,6 +214,9 @@ class AsyncDDQNTrainer:
         self.transition_count = 0
         self.episode_count = 0
         self.solved = False
+        self.active_workers = set(range(len(instances)))
+        self.dead_workers = {}
+        self.checkpoint_freq = max(0, int(getattr(args, "ddqn_checkpoint_freq", 0)))
 
     def train(
         self,
@@ -251,6 +259,7 @@ class AsyncDDQNTrainer:
                 transition_queue=transition_queue,
                 stats_queue=stats_queue,
                 weight_queues=weight_queues,
+                workers=workers,
                 stop_event=stop_event,
                 max_episodes=max_episodes,
                 network_update_frequency=network_update_frequency,
@@ -271,6 +280,7 @@ class AsyncDDQNTrainer:
         transition_queue,
         stats_queue,
         weight_queues,
+        workers,
         stop_event,
         max_episodes,
         network_update_frequency,
@@ -279,11 +289,15 @@ class AsyncDDQNTrainer:
         evaluate_n_iter,
     ):
         while self.episode_count < max_episodes and not self.solved:
-            self._drain_stats_queue(stats_queue, evaluate_frequency, evaluate_n_iter)
+            self._drain_stats_queue(
+                stats_queue, workers, evaluate_frequency, evaluate_n_iter
+            )
 
             try:
                 transition = transition_queue.get(timeout=1.0)
             except queue.Empty:
+                if not self.active_workers:
+                    raise RuntimeError("所有 DDQN worker 都已退出，训练终止")
                 continue
 
             self.buffer.append(*transition)
@@ -294,7 +308,8 @@ class AsyncDDQNTrainer:
 
             if self.transition_count % network_update_frequency == 0:
                 loss_value = self.update()
-                self.training_loss.append(loss_value)
+                if loss_value is not None:
+                    self.training_loss.append(loss_value)
 
             if self.transition_count % network_sync_frequency == 0:
                 self.target_network.load_state_dict(self.network.state_dict())
@@ -304,23 +319,54 @@ class AsyncDDQNTrainer:
                     _put_latest_weights(weights_queue, latest_state_dict)
 
         stop_event.set()
-        self._drain_stats_queue(stats_queue, evaluate_frequency, evaluate_n_iter)
+        self._drain_stats_queue(stats_queue, workers, evaluate_frequency, evaluate_n_iter)
         if self.solved:
             print(f"\nEnvironment solved in {self.episode_count} episodes.")
         else:
             print("\nEpisode limit reached.")
 
-    def _drain_stats_queue(self, stats_queue, evaluate_frequency, evaluate_n_iter):
+    def _drain_stats_queue(self, stats_queue, workers, evaluate_frequency, evaluate_n_iter):
+        for worker_id, process in enumerate(workers):
+            if worker_id in self.active_workers and not process.is_alive() and process.exitcode not in (None, 0):
+                self.active_workers.discard(worker_id)
+                self.dead_workers[worker_id] = f"进程异常退出，exitcode={process.exitcode}"
+                print(
+                    f"\n[DDQN][Worker {worker_id}] 进程异常退出，已从训练中移除",
+                    flush=True,
+                )
+
         while True:
             try:
                 message = stats_queue.get_nowait()
             except queue.Empty:
+                if not self.active_workers and self.dead_workers:
+                    raise RuntimeError(
+                        "所有 DDQN worker 都已失效: "
+                        + "; ".join(
+                            f"worker {worker_id}: {reason}"
+                            for worker_id, reason in sorted(self.dead_workers.items())
+                        )
+                    )
                 return
 
             if message["type"] == "error":
-                raise RuntimeError(
-                    f"DDQN worker {message['worker_id']} 失败: {message['message']}"
+                worker_id = message["worker_id"]
+                self.active_workers.discard(worker_id)
+                self.dead_workers[worker_id] = message["message"]
+                print(
+                    f"\n[DDQN][Worker {worker_id}] 失败，已从训练中移除: {message['message']} "
+                    f"(pid={message['pid']}, port={message['port']})",
+                    flush=True,
                 )
+                if not self.active_workers:
+                    raise RuntimeError(
+                        "所有 DDQN worker 都已失效: "
+                        + "; ".join(
+                            f"worker {wid}: {reason}"
+                            for wid, reason in sorted(self.dead_workers.items())
+                        )
+                    )
+                continue
 
             if message["type"] == "warning":
                 print(
@@ -338,6 +384,17 @@ class AsyncDDQNTrainer:
             mean_iteration = np.mean(self.training_iterations[-self.window :])
             self.mean_training_rewards.append(mean_rewards)
             self.mean_training_iterations.append(mean_iteration)
+
+            if self.checkpoint_freq and self.episode_count % self.checkpoint_freq == 0:
+                train_utils.save_runtime_checkpoint(
+                    self.args,
+                    network=self.network,
+                    tag=f"episode_{self.episode_count}",
+                )
+                print(
+                    f"\n[DDQN] 已保存周期 checkpoint: episode {self.episode_count}",
+                    flush=True,
+                )
 
             progress_line = (
                 "Episode {:d} Mean Rewards {:.2f}\t\t Mean Iterations {:.2f}\t\t".format(
@@ -386,31 +443,49 @@ class AsyncDDQNTrainer:
         qvals = torch.gather(self.network.get_qvals(states), 1, actions_t)
 
         next_masks = np.array(next_masks, dtype=bool)
-        qvals_next_pred = self.network.get_qvals(next_states)
-        next_masks_t = torch.as_tensor(
-            next_masks, dtype=torch.bool, device=qvals_next_pred.device
-        )
-        qvals_next_pred = qvals_next_pred.clone()
-        qvals_next_pred[~next_masks_t] = qvals_next_pred.min()
-        next_actions = torch.max(qvals_next_pred, dim=-1)[1]
-        next_actions_t = torch.as_tensor(
-            next_actions, dtype=torch.long, device=self.network.device
-        ).reshape(-1, 1)
+        with torch.no_grad():
+            qvals_next_pred = self.network.get_qvals(next_states)
+            next_masks_t = torch.as_tensor(
+                next_masks, dtype=torch.bool, device=qvals_next_pred.device
+            )
+            qvals_next_pred = qvals_next_pred.clone()
+            qvals_next_pred[~next_masks_t] = qvals_next_pred.min()
+            next_actions = torch.max(qvals_next_pred, dim=-1)[1]
+            next_actions_t = torch.as_tensor(
+                next_actions, dtype=torch.long, device=self.network.device
+            ).reshape(-1, 1)
 
-        target_qvals = self.target_network.get_qvals(next_states)
-        qvals_next = torch.gather(target_qvals, 1, next_actions_t).detach()
+            target_qvals = self.target_network.get_qvals(next_states)
+            qvals_next = torch.gather(target_qvals, 1, next_actions_t)
         qvals_next[dones_t] = 0
         expected_qvals = self.gamma * qvals_next + rewards_t
         return nn.MSELoss()(qvals, expected_qvals)
 
     def update(self):
-        self.network.optimizer.zero_grad()
+        self.network.optimizer.zero_grad(set_to_none=True)
         batch = self.buffer.sample_batch(batch_size=self.batch_size)
-        loss = self.calculate_loss(batch)
-        loss.backward()
-        self.network.optimizer.step()
-        return (
-            float(loss.detach().cpu().item())
-            if self.network.device == "cuda"
-            else float(loss.detach().item())
-        )
+
+        try:
+            loss = self.calculate_loss(batch)
+            loss.backward()
+            self.network.optimizer.step()
+            return (
+                float(loss.detach().cpu().item())
+                if self.network.device == "cuda"
+                else float(loss.detach().item())
+            )
+        except (RuntimeError, torch.AcceleratorError) as exc:
+            message = str(exc).lower()
+            is_oom = "out of memory" in message or "cudaerrormemoryallocation" in message
+            if not is_oom:
+                raise
+
+            self.network.optimizer.zero_grad(set_to_none=True)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            print(
+                "\n[DDQN] CUDA OOM，已清理缓存并跳过本次 update。"
+                f" batch_size={self.batch_size}",
+                flush=True,
+            )
+            return None

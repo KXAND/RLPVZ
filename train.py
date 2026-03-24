@@ -25,10 +25,11 @@ import train_utils
 
 def main():
     args = get_args()
+    train_utils.setup_logging(args)
+    train_utils.prepare_resume_paths(args)
 
     print_metadata(args)
     device = train_utils.setup_device()
-    train_utils.setup_logging()
 
     if not train_utils.ensure_game_ready(args):
         return

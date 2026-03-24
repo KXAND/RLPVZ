@@ -101,7 +101,8 @@ def make_single_env(args, instance):
             target_pid=instance["pid"],
             game_speed=args.speed,
             frame_skip=args.frameskip,
-            verbose=args.env_verbose,
+            verbose=args.env_console_log_level,
+            log_verbose=args.file_log_level,
         )
     else:
         env = DiversifiedPVZEnv(
@@ -110,7 +111,8 @@ def make_single_env(args, instance):
             game_speed=args.speed,
             frame_skip=args.frameskip,
             diversify_prob=args.diversify,
-            verbose=args.env_verbose,
+            verbose=args.env_console_log_level,
+            log_verbose=args.file_log_level,
         )
     env = ActionMasker(env, mask_fn)
     return env

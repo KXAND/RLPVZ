@@ -13,11 +13,35 @@ def get_args():
     common.add_argument(
         "--algo",
         type=str,
-        default="ppo",
+        default="ddqn",
         choices=["ppo", "ddqn"],
         help="训练算法",
     )
     common.add_argument("--port", "-p", type=int, default=12345, help="Hook 端口")
+    common.add_argument(
+        "--num_envs",
+        type=int,
+        default=10,
+        help="并行环境数量，对应多个 PVZ 进程",
+    )
+    common.add_argument(
+        "--base_port",
+        type=int,
+        default=12345,
+        help="多实例自动分配时的起始 Hook 端口",
+    )
+    common.add_argument(
+        "--ports",
+        type=str,
+        default="",
+        help="显式指定多实例端口，逗号分隔，如 12345,12346,12347",
+    )
+    common.add_argument(
+        "--pids",
+        type=str,
+        default="",
+        help="显式指定目标 PVZ 进程 PID，逗号分隔",
+    )
     common.add_argument(
         "--auto_start",
         action="store_true",
@@ -35,6 +59,13 @@ def get_args():
     )
     common.add_argument(
         "--wait_time", type=float, default=3.0, help="游戏启动等待时间 (秒)"
+    )
+    common.add_argument(
+        "--env_verbose",
+        type=int,
+        default=0,
+        choices=[0, 1, 2],
+        help="环境日志级别: 0=静默, 1=关键信息, 2=详细调试",
     )
 
     # PPO 参数

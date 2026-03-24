@@ -14,6 +14,7 @@ models/*.pt
 models/*.pkl
 crash.txt
 heatmap.html
+models_output/*
 
 
 # OS

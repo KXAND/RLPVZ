@@ -7,6 +7,7 @@ import numpy as np
 from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.vec_env import (
     DummyVecEnv,
+    SubprocVecEnv,
     VecMonitor,
     VecFrameStack,
     VecNormalize,
@@ -93,31 +94,49 @@ class DiversifiedPVZEnv(PVZEnv):
                 self._cached_game_state = self.pvz.get_game_state()
 
 
+def make_single_env(args, instance):
+    if args.no_diversify:
+        env = PVZEnv(
+            hook_port=instance["port"],
+            target_pid=instance["pid"],
+            game_speed=args.speed,
+            frame_skip=args.frameskip,
+            verbose=args.env_verbose,
+        )
+    else:
+        env = DiversifiedPVZEnv(
+            hook_port=instance["port"],
+            target_pid=instance["pid"],
+            game_speed=args.speed,
+            frame_skip=args.frameskip,
+            diversify_prob=args.diversify,
+            verbose=args.env_verbose,
+        )
+    env = ActionMasker(env, mask_fn)
+    return env
+
+
+def _make_env_factory(args, instance):
+    def _factory():
+        return make_single_env(args, instance)
+
+    return _factory
+
+
 def get_env(args):
     if args.algo == "ddqn":
         env = ddqn_factory._build_ddqn_env(args)
         return env
-    
+
     load_path = train_utils.resolve_load_path(args)
-
-    def make_env():
-        if args.no_diversify:
-            env = PVZEnv(
-                hook_port=args.port,
-                game_speed=args.speed,
-                frame_skip=args.frameskip,
-            )
-        else:
-            env = DiversifiedPVZEnv(
-                hook_port=args.port,
-                game_speed=args.speed,
-                frame_skip=args.frameskip,
-                diversify_prob=args.diversify,
-            )
-        env = ActionMasker(env, mask_fn)
-        return env
-
-    env = DummyVecEnv([make_env])
+    instances = getattr(args, "game_instances", None) or train_utils.resolve_game_instances(
+        args
+    )
+    factories = [_make_env_factory(args, instance) for instance in instances]
+    if len(factories) == 1:
+        env = DummyVecEnv(factories)
+    else:
+        env = SubprocVecEnv(factories, start_method="spawn")
 
     # 1. 监控 (记录原始奖励)
     env = VecMonitor(env)

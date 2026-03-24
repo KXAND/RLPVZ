@@ -40,7 +40,12 @@ class PVZInterface:
         pvz = PVZInterface(mode=InterfaceMode.LEGACY)
     """
     
-    def __init__(self, mode: InterfaceMode = InterfaceMode.HOOK):
+    def __init__(
+        self,
+        mode: InterfaceMode = InterfaceMode.HOOK,
+        hook_port: int = 12345,
+        target_pid: Optional[int] = None,
+    ):
         """
         Initialize interface
         
@@ -48,6 +53,8 @@ class PVZInterface:
             mode: Interface mode (HOOK or LEGACY)
         """
         self.mode = mode
+        self.hook_port = hook_port
+        self.target_pid = target_pid
         self.logger = get_logger()
         
         if mode == InterfaceMode.HOOK:
@@ -106,7 +113,7 @@ class PVZInterface:
         from hook_client import HookClient
         
         # Attach for reading
-        if not self.attacher.attach():
+        if not self.attacher.attach(pid=self.target_pid):
             return False
         
         kernel32 = self.attacher.kernel32
@@ -119,7 +126,7 @@ class PVZInterface:
         self.writer = MemoryWriter(kernel32, handle)  # Enable writing in Hook mode too
         
         # Connect to Hook DLL
-        self.hook_client = HookClient()
+        self.hook_client = HookClient(port=self.hook_port)
         if not self.hook_client.connect():
             self.logger.warning("Hook DLL not connected. Make sure DLL is injected.")
             # Don't fail - still allow reading

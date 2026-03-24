@@ -44,22 +44,24 @@ class ProcessAttacher:
         
         return None
     
-    def attach(self) -> bool:
+    def attach(self, pid: Optional[int] = None) -> bool:
         """
         Attach to the PVZ process
         
         Returns:
             True if successfully attached, False otherwise
         """
-        hwnd = self.find_pvz_window()
-        if not hwnd:
-            return False
-        
-        # Get process ID from window
-        pid = wt.DWORD()
-        self.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        self.pid = pid.value
-        
+        if pid is None:
+            hwnd = self.find_pvz_window()
+            if not hwnd:
+                return False
+
+            found_pid = wt.DWORD()
+            self.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(found_pid))
+            self.pid = found_pid.value
+        else:
+            self.pid = int(pid)
+
         if not self.pid:
             return False
         

@@ -1,23 +1,37 @@
 import os
 
 
-def _build_ddqn_env(args):
+def _build_ddqn_env(args, instance=None):
     from envs import PVZEnv
     from .adapter import DDQNEnvAdapter
+    import train_utils
+
+    if instance is None:
+        instances = getattr(args, "game_instances", None) or train_utils.resolve_game_instances(
+            args
+        )
+        instance = instances[0]
 
     env = PVZEnv(
-        hook_port=args.port,
+        hook_port=instance["port"],
+        target_pid=instance["pid"],
         game_speed=args.speed,
         frame_skip=args.frameskip,
+        verbose=args.env_verbose,
     )
     return DDQNEnvAdapter(env)
 
 
 def train_ddqn(args):
     import torch
-    from .ddqn import QNetwork, DDQNAgent, experienceReplayBuffer
+    import train_utils
+    from .async_trainer import AsyncDDQNTrainer
+    from .ddqn import QNetwork
 
-    env = _build_ddqn_env(args)
+    instances = getattr(args, "game_instances", None) or train_utils.resolve_game_instances(
+        args
+    )
+    env = _build_ddqn_env(args, instance=instances[0])
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     network = QNetwork(env, learning_rate=args.ddqn_lr, device=device)
@@ -26,14 +40,10 @@ def train_ddqn(args):
         state_dict = torch.load(args.ddqn_load_path, map_location=device)
         network.load_state_dict(state_dict)
 
-    buffer = experienceReplayBuffer(
-        memory_size=args.ddqn_buffer_size, burn_in=args.ddqn_burn_in
-    )
-    agent = DDQNAgent(env, network, buffer, batch_size=args.ddqn_batch_size)
+    trainer = AsyncDDQNTrainer(args, instances, network)
 
     try:
-        agent.train(
-            gamma=args.ddqn_gamma,
+        trainer.train(
             max_episodes=args.ddqn_episodes,
             network_update_frequency=args.ddqn_update_freq,
             network_sync_frequency=args.ddqn_sync_freq,

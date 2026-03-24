@@ -9,7 +9,7 @@ import ctypes
 from ctypes import wintypes
 import psutil
 import logging
-from typing import Optional
+from typing import Iterable, List, Optional
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -29,6 +29,21 @@ PAGE_READWRITE = 0x04
 INFINITE = 0xFFFFFFFF
 
 
+def list_pvz_processes() -> List[int]:
+    """
+    列出所有 PVZ 进程 PID。
+    """
+    pids = []
+    for proc in psutil.process_iter(["pid", "name"]):
+        try:
+            name = (proc.info["name"] or "").lower()
+            if "plantsvszombies" in name or "popcapgame1" in name:
+                pids.append(proc.info["pid"])
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return sorted(pids)
+
+
 def find_pvz_process() -> Optional[int]:
     """
     查找PVZ进程
@@ -36,23 +51,78 @@ def find_pvz_process() -> Optional[int]:
     Returns:
         进程ID，未找到返回None
     """
-    for proc in psutil.process_iter(['pid', 'name']):
+    pids = list_pvz_processes()
+    return pids[0] if pids else None
+
+
+def _resolve_port_config_dirs(pid: int) -> List[str]:
+    """
+    尽量同时覆盖进程 cwd 与 exe 目录，避免相对路径解析差异。
+    """
+    dirs = []
+    try:
+        proc = psutil.Process(pid)
         try:
-            name = proc.info['name'].lower()
-            if 'plantsvszombies' in name or 'popcapgame1' in name:
-                return proc.info['pid']
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-    return None
+            cwd = proc.cwd()
+            if cwd:
+                dirs.append(cwd)
+        except (psutil.AccessDenied, psutil.NoSuchProcess):
+            pass
+
+        try:
+            exe_dir = os.path.dirname(proc.exe())
+            if exe_dir:
+                dirs.append(exe_dir)
+        except (psutil.AccessDenied, psutil.NoSuchProcess):
+            pass
+    except psutil.NoSuchProcess:
+        return []
+
+    seen = set()
+    unique_dirs = []
+    for path in dirs:
+        norm = os.path.normcase(os.path.abspath(path))
+        if norm not in seen:
+            seen.add(norm)
+            unique_dirs.append(path)
+    return unique_dirs
 
 
-def inject_dll(dll_path: Optional[str] = None, pid: Optional[int] = None) -> bool:
+def write_hook_port_config(pid: int, port: int) -> bool:
+    """
+    为指定 PVZ 进程写入 hook_port.txt。
+    """
+    target_dirs = _resolve_port_config_dirs(pid)
+    if not target_dirs:
+        logger.error(f"Could not resolve config directory for PID={pid}")
+        return False
+
+    content = f"{int(port)}\n"
+    wrote = False
+    for target_dir in target_dirs:
+        config_path = os.path.join(target_dir, "hook_port.txt")
+        try:
+            with open(config_path, "w", encoding="ascii") as fh:
+                fh.write(content)
+            logger.info(f"Wrote hook port config: {config_path} -> {port}")
+            wrote = True
+        except OSError as exc:
+            logger.warning(f"Failed to write hook port config {config_path}: {exc}")
+    return wrote
+
+
+def inject_dll(
+    dll_path: Optional[str] = None,
+    pid: Optional[int] = None,
+    port: Optional[int] = None,
+) -> bool:
     """
     注入DLL到PVZ进程
     
     Args:
         dll_path: DLL路径，默认为hook/pvz_hook.dll
         pid: 目标进程ID，默认自动查找
+        port: Hook 监听端口，写入目标进程的 hook_port.txt
         
     Returns:
         True if successful
@@ -80,6 +150,10 @@ def inject_dll(dll_path: Optional[str] = None, pid: Optional[int] = None) -> boo
             return False
     
     logger.info(f"Found PVZ process: PID={pid}")
+
+    if port is not None and not write_hook_port_config(pid, port):
+        logger.error(f"Failed to write hook port config for PID={pid}, port={port}")
+        return False
     
     # Check if DLL is already loaded
     try:
@@ -377,11 +451,34 @@ def inject_dll(dll_path: Optional[str] = None, pid: Optional[int] = None) -> boo
         kernel32.VirtualFreeEx(hProcess, pDllPath, 0, MEM_RELEASE)
         
         logger.info("DLL injected successfully!")
-        logger.info("Hook DLL should be listening on port 12345")
+        if port is not None:
+            logger.info(f"Hook DLL should be listening on port {port}")
+        else:
+            logger.info("Hook DLL should be listening on its configured port")
         return True
         
     finally:
         kernel32.CloseHandle(hProcess)
+
+
+def inject_dlls(
+    pids: Iterable[int],
+    ports: Iterable[int],
+    dll_path: Optional[str] = None,
+) -> bool:
+    """
+    顺序为多个 PVZ 进程注入 DLL，并分配各自端口。
+    """
+    pid_list = list(pids)
+    port_list = list(ports)
+    if len(pid_list) != len(port_list):
+        raise ValueError("pids and ports must have the same length")
+
+    ok = True
+    for pid, port in zip(pid_list, port_list):
+        if not inject_dll(dll_path=dll_path, pid=pid, port=port):
+            ok = False
+    return ok
 
 
 if __name__ == '__main__':

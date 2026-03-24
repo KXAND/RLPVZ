@@ -13,7 +13,7 @@ import logging
 import os
 
 from hook_client import HookClient
-from hook_client.injector import find_pvz_process, inject_dll
+from hook_client.injector import find_pvz_process, inject_dll, list_pvz_processes
 from core import PVZInterface, InterfaceMode
 from data.plants import PlantType, PLANT_COST
 from data.zombies import ZombieType, ZOMBIE_BASE_SPEED
@@ -96,6 +96,7 @@ class PVZEnv(gym.Env):
         max_steps: int = 10000,
         game_speed: float = 20.0,  # 游戏速度倍率 (20x 超快)
         hook_port: int = 12345,  # Hook DLL 端口（多实例时指定不同端口）
+        target_pid: Optional[int] = None,  # 绑定到指定 PVZ 进程
         verbose: int = 1,  # 日志级别: 0=静默, 1=关键信息, 2=详细调试
     ):
         """
@@ -117,6 +118,7 @@ class PVZEnv(gym.Env):
         self.max_steps = max_steps
         self.game_speed = max(0.1, min(100.0, game_speed))  # 支持最高 100x 速度
         self.hook_port = hook_port  # 保存端口
+        self.target_pid = target_pid
         self.verbose = verbose  # 日志级别
         
         # 加载配置
@@ -252,6 +254,8 @@ class PVZEnv(gym.Env):
 
     def _is_pvz_running(self) -> bool:
         """检查 PVZ 进程是否在运行"""
+        if self.target_pid is not None:
+            return self.target_pid in list_pvz_processes()
         return find_pvz_process() is not None
 
     def _restart_pvz(self) -> bool:
@@ -278,7 +282,9 @@ class PVZEnv(gym.Env):
             self.pvz = None
 
         # 检查游戏是否还在运行
-        pid = find_pvz_process()
+        pid = self.target_pid if self._is_pvz_running() else None
+        if pid is None:
+            pid = find_pvz_process()
         if pid:
             print(f"[DEBUG] PVZ 进程存在 (PID={pid})，尝试重新注入 DLL...")
         else:
@@ -290,7 +296,7 @@ class PVZEnv(gym.Env):
                     # 等待游戏启动
                     for _ in range(30):  # 最多等待 30 秒
                         time.sleep(1)
-                        if find_pvz_process():
+                        if self._is_pvz_running():
                             print(f"[DEBUG] 游戏已启动!")
                             break
                     else:
@@ -309,7 +315,7 @@ class PVZEnv(gym.Env):
 
         # 注入 DLL
         print(f"[DEBUG] 注入 Hook DLL...")
-        if not inject_dll():
+        if not inject_dll(pid=pid, port=self.hook_port):
             print(f"[DEBUG] DLL 注入失败!")
             return False
 
@@ -356,7 +362,11 @@ class PVZEnv(gym.Env):
                     return False
         
         if self.pvz is None:
-            self.pvz = PVZInterface(mode=InterfaceMode.HOOK)
+            self.pvz = PVZInterface(
+                mode=InterfaceMode.HOOK,
+                hook_port=self.hook_port,
+                target_pid=self.target_pid,
+            )
             if not self.pvz.attach():
                 if self.verbose >= 1:
                     print("[PVZEnv] 错误: 无法附加到PVZ进程")
@@ -381,13 +391,65 @@ class PVZEnv(gym.Env):
         self._set_game_speed(1.0)
         
         if self.pvz is None:
-            self.pvz = PVZInterface(mode=InterfaceMode.HOOK)
+            self.pvz = PVZInterface(
+                mode=InterfaceMode.HOOK,
+                hook_port=self.hook_port,
+                target_pid=self.target_pid,
+            )
             if not self.pvz.attach():
                 if self.verbose >= 1:
                     print("[PVZEnv] 错误: 无法附加到PVZ进程")
                 return False
         
         return True
+
+    def _require_ui(self, target_ui: int, timeout: float, error_message: str) -> None:
+        """等待目标 UI，超时则显式失败。"""
+        if not self.hook_client.wait_for_ui(target_ui, timeout=timeout):
+            current_ui = self.hook_client.get_ui() if self.hook_client else -1
+            raise RuntimeError(
+                f"{error_message} (target_ui={target_ui}, current_ui={current_ui})"
+            )
+
+    def _wait_card_select_ready_or_raise(self, timeout: float = 5.0) -> None:
+        """等待选卡界面就绪，超时则失败。"""
+        if not self.hook_client.wait_for_card_select_ready(timeout):
+            current_ui = self.hook_client.get_ui() if self.hook_client else -1
+            raise RuntimeError(f"选卡界面未就绪 (current_ui={current_ui})")
+
+    def _back_to_main_or_raise(self, timeout: float = 2.0) -> int:
+        """安全返回主菜单，并验证结果。"""
+        if not self.hook_client.back_to_main():
+            raise RuntimeError("返回主菜单命令发送失败")
+        self._require_ui(1, timeout=timeout, error_message="返回主菜单超时")
+        return 1
+
+    def _start_from_card_select_or_raise(self) -> int:
+        """在选卡界面完成选卡并开始游戏。"""
+        self._wait_card_select_ready_or_raise(timeout=5.0)
+        if not self.hook_client.select_cards(self.card_plant_ids):
+            raise RuntimeError("选卡失败")
+        time.sleep(len(self.card_plant_ids) * 0.1 + 0.5)
+        if not self.hook_client.rock():
+            raise RuntimeError("开始游戏失败")
+        self._require_ui(3, timeout=10.0, error_message="选卡后进入游戏超时")
+        return 3
+
+    def _start_from_main_menu_or_raise(self) -> int:
+        """从主菜单进入游戏；若快捷流程失败，则走手动兜底流程。"""
+        if self.hook_client.auto_start_game(
+            mode=self.game_mode,
+            cards=self.card_plant_ids,
+            timeout=10.0,
+        ):
+            self._require_ui(3, timeout=10.0, error_message="自动开始后进入游戏超时")
+            return 3
+
+        time.sleep(0.5)
+        ui = self.hook_client.get_ui()
+        if ui == 2:
+            return self._start_from_card_select_or_raise()
+        raise RuntimeError(f"自动开始游戏失败，且未进入选卡界面 (current_ui={ui})")
     
     def reset(
         self,
@@ -428,11 +490,15 @@ class PVZEnv(gym.Env):
                     break
                 if _ % 10 == 0:
                     self.hook_client.click(400, 300)
+            if ui == 0:
+                raise RuntimeError("加载界面停留超时")
         
         if ui == 7:  # 选项界面
             self.hook_client._send_command("CLOSEOPTS")
             time.sleep(0.5)
             ui = self.hook_client.get_ui()
+            if ui == 7:
+                raise RuntimeError("关闭选项界面失败")
         
         if ui == 4:  # ZOMBIES_WON
             for attempt in range(10):
@@ -443,54 +509,22 @@ class PVZEnv(gym.Env):
                     ui = new_ui
                     break
             if ui == 4:
-                self.hook_client.back_to_main()
-                time.sleep(1.0)
-                ui = self.hook_client.get_ui()
+                ui = self._back_to_main_or_raise(timeout=2.0)
         
         if ui == 5:  # AWARD
-            self.hook_client.back_to_main()
-            time.sleep(1.0)
-            ui = self.hook_client.get_ui()
+            ui = self._back_to_main_or_raise(timeout=2.0)
         
         if ui == 3:  # 游戏中
-            self.hook_client.back_to_main()
-            time.sleep(1.0)
-            ui = self.hook_client.get_ui()
+            ui = self._back_to_main_or_raise(timeout=2.0)
         
         if ui == 2:  # 选卡界面
-            # 等待卡片界面就绪（最多3秒）
-            for _ in range(30):
-                if self.hook_client.is_card_select_ready():
-                    break
-                time.sleep(0.1)
-            
-            self.hook_client.select_cards(self.card_plant_ids)
-            time.sleep(len(self.card_plant_ids) * 0.1 + 0.5)
-            self.hook_client.rock()
-            time.sleep(1.0)
-            ui = self.hook_client.get_ui()
+            ui = self._start_from_card_select_or_raise()
         
         if ui == 1:  # 主菜单
-            if not self.hook_client.auto_start_game(
-                mode=self.game_mode,
-                cards=self.card_plant_ids,
-                timeout=10.0
-            ):
-                time.sleep(0.5)
-                ui = self.hook_client.get_ui()
-                if ui == 2:
-                    # 等待卡片界面就绪（最多3秒）
-                    for _ in range(30):
-                        if self.hook_client.is_card_select_ready():
-                            break
-                        time.sleep(0.1)
-                    self.hook_client.select_cards(self.card_plant_ids)
-                    time.sleep(len(self.card_plant_ids) * 0.1 + 0.5)
-                    self.hook_client.rock()
-                    time.sleep(1.0)
+            ui = self._start_from_main_menu_or_raise()
         
         # 等待游戏开始
-        self.hook_client.wait_for_ui(3, timeout=10.0)
+        self._require_ui(3, timeout=10.0, error_message="等待游戏开始超时")
         
         # 设置初始阳光 (如果是教学模式)
         if self.initial_sun != 50:

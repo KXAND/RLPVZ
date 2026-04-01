@@ -29,3 +29,8 @@ PvZ_Toolkit_v1.22.0
 v5ProcessManager
 gameobj
 
+# build
+build/
+
+# references
+ref/

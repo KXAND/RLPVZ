@@ -19,9 +19,11 @@ class QNetwork(nn.Module):
         self.learning_rate = learning_rate
 
         self.network = nn.Sequential(
-            nn.Linear(self.n_inputs, 50, bias=True),
+            nn.Linear(self.n_inputs, 256, bias=True),
             nn.LeakyReLU(),
-            nn.Linear(50, self.n_outputs, bias=True),
+            nn.Linear(256, 128, bias=True),
+            nn.LeakyReLU(),
+            nn.Linear(128, self.n_outputs, bias=True),
         )
 
         if self.device == "cuda":

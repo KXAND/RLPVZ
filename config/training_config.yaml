@@ -212,6 +212,6 @@ training:
     
   # 环境配置
   env:
-    frame_skip: 60               # 4帧决策一次 (标准设置，避免决策过于频繁)
+    frame_skip: 60              # 4帧决策一次 (标准设置，避免决策过于频繁)
     max_steps: 10000            # 最大步数
     normalize_obs: true         # 归一化观测

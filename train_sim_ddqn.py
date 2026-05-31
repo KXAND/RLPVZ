@@ -14,8 +14,83 @@ from copy import deepcopy
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from simenv import SimPVZEnv
-from models.ddqn.ddqn import QNetwork, experienceReplayBuffer
+from models.ddqn.ddqn import experienceReplayBuffer
 from models.threshold import Threshold
+import torch.nn as nn
+
+
+class SimQNetwork(nn.Module):
+    """DQN with feature extractors for the SimPVZ grid-based observation.
+
+    Architecture mirrors the original pvz_rl DDQN:
+      PlantGrid(45) -> GridNet(45->4)
+      ZombieGrid(45) -> per-lane Linear(9->1) x 5 lanes = 5
+      Rest(5) unchanged
+      Combined(14) -> MLP(14->50->181)
+    """
+
+    def __init__(self, env, learning_rate=1e-3, device="cpu"):
+        super().__init__()
+        self.device = device
+        self.rows = env.rows
+        self.cols = env.cols
+        self.num_cards = env.num_cards
+        self.grid_size = self.rows * self.cols
+        self.n_outputs = env.action_space.n
+        self.actions = np.arange(env.action_space.n)
+        self.learning_rate = learning_rate
+
+        # Feature extractors (like original GridNet / ZombieNet)
+        self.gridnet = nn.Linear(self.grid_size, 4)          # 45 -> 4
+        self.zombienet = nn.Linear(self.cols, 1)             # per-lane: 9 -> 1 (x5 lanes = 5)
+        combined_size = 4 + self.rows + self.num_cards + 1   # 4 + 5 + 4 + 1 = 14
+
+        self.mlp = nn.Sequential(
+            nn.Linear(combined_size, 50, bias=True),
+            nn.LeakyReLU(),
+            nn.Linear(50, self.n_outputs, bias=True),
+        )
+
+        if self.device == "cuda":
+            self.cuda()
+
+        self.optimizer = torch.optim.Adam(
+            filter(lambda p: p.requires_grad, self.parameters()), lr=self.learning_rate)
+
+    def decide_action(self, state, mask, epsilon):
+        if np.random.random() < epsilon:
+            valid_actions = self.actions[np.asarray(mask, dtype=bool)]
+            return np.random.choice(valid_actions)
+        return self.get_greedy_action(state, mask)
+
+    def get_greedy_action(self, state, mask):
+        qvals = self.get_qvals(state)
+        mask_t = torch.as_tensor(mask, dtype=torch.bool, device=qvals.device)
+        qvals = qvals.clone()
+        qvals[~mask_t] = qvals.min()
+        return torch.max(qvals, dim=-1)[1].item()
+
+    def get_qvals(self, state):
+        single = not isinstance(state, (list, tuple))
+        if single:
+            state = np.array([state])
+        else:
+            state = np.array(state)
+        state_t = torch.as_tensor(state, dtype=torch.float32, device=self.device)
+        batch = state_t.shape[0]
+
+        plant_grid = state_t[:, :self.grid_size]                           # (B, 45)
+        zombie_grid = state_t[:, self.grid_size:2 * self.grid_size]        # (B, 45)
+        rest = state_t[:, 2 * self.grid_size:]                             # (B, 5)
+
+        plant_feat = self.gridnet(plant_grid)                              # (B, 4)
+        # Normalize zombie HP before feature extraction to keep scale ~[0, 10]
+        zombie_reshaped = zombie_grid.reshape(batch, self.rows, self.cols) / 1000.0
+        zombie_feat = self.zombienet(zombie_reshaped).squeeze(-1)          # (B, 5)
+
+        combined = torch.cat([plant_feat, zombie_feat, rest], dim=-1)      # (B, 14)
+        out = self.mlp(combined)
+        return out[0] if single else out
 
 
 def evaluate(env, network, n_iter=100, verbose=True):
@@ -47,7 +122,7 @@ def evaluate(env, network, n_iter=100, verbose=True):
 def train_sim_ddqn(
     max_episodes=100000,
     buffer_size=100000,
-    burn_in=1000,
+    burn_in=10000,
     batch_size=200,
     gamma=0.99,
     lr=1e-3,
@@ -58,11 +133,11 @@ def train_sim_ddqn(
     save_path="saved/sim_ddqn.pt",
 ):
     env = SimPVZEnv()
-    network = QNetwork(env, learning_rate=lr, device="cpu")
+    network = SimQNetwork(env, learning_rate=lr, device="cpu")
     target_network = deepcopy(network)
     buffer = experienceReplayBuffer(memory_size=buffer_size, burn_in=burn_in)
     threshold = Threshold(
-        seq_length=100000,
+        seq_length=max_episodes,
         start_epsilon=1.0,
         interpolation="exponential",
         end_epsilon=0.05,
@@ -131,10 +206,11 @@ def train_sim_ddqn(
 
         ep += 1
         training_rewards.append(ep_reward)
-        training_iterations.append(env.steps)
+        training_iterations.append(env._scene._chrono)
         if update_loss:
             training_loss.append(np.mean(update_loss))
         update_loss = []
+        state = env.reset()
 
         # Print progress
         if ep % 100 == 0:
@@ -219,8 +295,8 @@ def _visualize_episode(env, network):
 
 if __name__ == "__main__":
     train_sim_ddqn(
-        max_episodes=50000,
+        max_episodes=100000,
         buffer_size=100000,
-        burn_in=1000,
+        burn_in=10000,
         batch_size=200,
     )

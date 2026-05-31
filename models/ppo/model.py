@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 from sb3_contrib import MaskablePPO
-from models.attention_extractor import PVZAttentionExtractor
+from models.ppo.attention_extractor import PVZAttentionExtractor
 
 
 def linear_schedule(initial_value: float):

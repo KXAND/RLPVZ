@@ -2,7 +2,7 @@ import queue
 
 import numpy as np
 
-from ..threshold import Threshold
+from .threshold import Threshold
 from .ddqn import QNetwork, copy_state_dict_to_cpu
 from training.logging import setup_worker_logging
 from training.worker_pool import AsyncWorkerPool

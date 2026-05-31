@@ -1,4 +1,4 @@
-from train_args import get_args
+from training.args import get_args
 from training.bootstrap import configure_training_process
 
 

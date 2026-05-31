@@ -71,7 +71,6 @@ DDQN 多进程示例：
 主要配置文件：
 
 - `config/training_config.yaml`：游戏模式、地图、卡组等训练配置。
-- `train_args.py`：命令行参数定义。
 - `training/defaults.py`：训练入口使用的默认路径和基础配置。
 
 常用参数：
@@ -143,7 +142,6 @@ ref/                   参考代码
 tools/                 辅助工具
 utils/                 日志、绘图、坐标、伤害等通用工具
 train.py               统一训练入口
-train_args.py          命令行参数
 training/              训练生命周期、日志、checkpoint、metrics 和运行准备
 AGENTS.md              二次开发协作规则
 ```

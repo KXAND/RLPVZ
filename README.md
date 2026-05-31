@@ -129,7 +129,6 @@ callbacks/             PPO 和训练回调
 config/                YAML 配置
 pvz_interface/         PVZ 高层接口
 data/                  植物、僵尸、偏移量等数据
-engine/                动作定义与执行逻辑
 envs/                  Gymnasium 环境
 game/                  游戏对象状态建模
 gameobj/               游戏文件目录

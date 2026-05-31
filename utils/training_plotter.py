@@ -10,6 +10,7 @@ class TrainingCurvePlotter:
         self.refresh_freq = max(0, int(refresh_freq))
         self._enabled = self.refresh_freq > 0
         self._plt = None
+        self._last_update_step = None
 
         if not self._enabled:
             return
@@ -42,14 +43,18 @@ class TrainingCurvePlotter:
     ) -> None:
         if not self.enabled:
             return
-        if not force and (step_count <= 0 or step_count % self.refresh_freq != 0):
+        if not force and step_count <= 0:
             return
+        if not force and self._last_update_step is not None:
+            if step_count - self._last_update_step < self.refresh_freq:
+                return
 
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         self._plot_reward_trend(mean_rewards, eval_steps, eval_rewards)
         self._plot_episode_rewards(episode_rewards, mean_rewards)
         self._plot_iterations(mean_iterations)
         self._plot_loss(losses)
+        self._last_update_step = step_count
 
     def _derived_path(self, suffix: str) -> str:
         return str(self.output_path.with_name(f"{self.output_path.stem}_{suffix}.png"))
@@ -81,7 +86,7 @@ class TrainingCurvePlotter:
         ax.set_xlabel("Episode")
         ax.set_ylabel("Reward")
         ax.grid(True, alpha=0.3)
-        ax.legend(loc="best")
+        self._legend_if_available(ax)
         fig.tight_layout()
         fig.savefig(self._derived_path("rewards"))
         plt.close(fig)
@@ -112,7 +117,7 @@ class TrainingCurvePlotter:
         ax.set_xlabel("Episode")
         ax.set_ylabel("Reward")
         ax.grid(True, alpha=0.3)
-        ax.legend(loc="best")
+        self._legend_if_available(ax)
         fig.tight_layout()
         fig.savefig(self._derived_path("episode_rewards"))
         plt.close(fig)
@@ -134,7 +139,7 @@ class TrainingCurvePlotter:
         ax.set_xlabel("Episode")
         ax.set_ylabel("Iterations")
         ax.grid(True, alpha=0.3)
-        ax.legend(loc="best")
+        self._legend_if_available(ax)
         fig.tight_layout()
         fig.savefig(self._derived_path("iterations"))
         plt.close(fig)
@@ -149,18 +154,21 @@ class TrainingCurvePlotter:
             x = np.arange(1, len(loss_arr) + 1)
 
             if len(loss_arr) >= 20:
-                display_cap = float(np.percentile(loss_arr, 98.0))
+                display_low = float(np.percentile(loss_arr, 2.0))
+                display_high = float(np.percentile(loss_arr, 98.0))
             else:
-                display_cap = float(np.max(loss_arr))
+                display_low = float(np.min(loss_arr))
+                display_high = float(np.max(loss_arr))
 
+            min_loss = float(np.min(loss_arr))
             max_loss = float(np.max(loss_arr))
-            if display_cap <= 0:
-                display_cap = max_loss
-            if max_loss > 0:
-                display_cap = min(max_loss, max(display_cap, max_loss * 0.15))
+            if display_low == display_high:
+                padding = max(1.0, abs(display_high) * 0.1)
+                display_low -= padding
+                display_high += padding
 
-            clipped = loss_arr > display_cap
-            visible_loss = np.minimum(loss_arr, display_cap)
+            clipped = (loss_arr < display_low) | (loss_arr > display_high)
+            visible_loss = np.clip(loss_arr, display_low, display_high)
 
             ax.plot(
                 x,
@@ -178,7 +186,7 @@ class TrainingCurvePlotter:
                 smooth_x = np.arange(window, len(loss_arr) + 1)
                 ax.plot(
                     smooth_x,
-                    np.minimum(smooth, display_cap),
+                    np.clip(smooth, display_low, display_high),
                     color="#8c564b",
                     linewidth=2.0,
                     label=f"moving avg ({window})",
@@ -187,7 +195,7 @@ class TrainingCurvePlotter:
             if np.any(clipped):
                 ax.scatter(
                     x[clipped],
-                    np.full(np.count_nonzero(clipped), display_cap),
+                    np.clip(loss_arr[clipped], display_low, display_high),
                     color="#d62728",
                     s=10,
                     alpha=0.8,
@@ -196,7 +204,7 @@ class TrainingCurvePlotter:
                 ax.text(
                     0.99,
                     0.97,
-                    f"display cap={display_cap:.1f} | max={max_loss:.1f} | clipped={np.count_nonzero(clipped)}",
+                    f"display=[{display_low:.3g}, {display_high:.3g}] | raw=[{min_loss:.3g}, {max_loss:.3g}] | clipped={np.count_nonzero(clipped)}",
                     transform=ax.transAxes,
                     ha="right",
                     va="top",
@@ -204,12 +212,29 @@ class TrainingCurvePlotter:
                     bbox=dict(boxstyle="round,pad=0.25", facecolor="white", alpha=0.8),
                 )
 
-            ax.set_ylim(0, display_cap * 1.05 if display_cap > 0 else 1.0)
+            padding = max(1e-6, (display_high - display_low) * 0.05)
+            ax.set_ylim(display_low - padding, display_high + padding)
+        else:
+            ax.text(
+                0.5,
+                0.5,
+                "No loss values yet",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                fontsize=11,
+            )
 
         ax.set_xlabel("Update Step")
         ax.set_ylabel("Loss")
         ax.grid(True, alpha=0.3)
-        ax.legend(loc="best")
+        self._legend_if_available(ax)
         fig.tight_layout()
         fig.savefig(self._derived_path("loss"))
         plt.close(fig)
+
+    @staticmethod
+    def _legend_if_available(ax) -> None:
+        handles, labels = ax.get_legend_handles_labels()
+        if handles and labels:
+            ax.legend(loc="best")

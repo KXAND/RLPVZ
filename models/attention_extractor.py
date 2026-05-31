@@ -18,9 +18,9 @@ class PVZAttentionExtractor(BaseFeaturesExtractor):
     8. **循环注意力**: 关注历史重要时刻
     
     输入 obs:
-        grid: (B, 5, 9, 13)
-        global_features: (B, 71)
-        card_attributes: (B, 10, 7)
+        grid: (B, rows, cols, channels)
+        global_features: (B, global_dim)
+        card_attributes: (B, num_cards, card_attr_dim)
     输出 features: (B, ff_dim)
     """
 
@@ -35,7 +35,7 @@ class PVZAttentionExtractor(BaseFeaturesExtractor):
         memory_size: int = 32,  # 长期记忆容量
         lstm_layers: int = 1,   # LSTM层数
     ):
-        grid_shape = observation_space["grid"].shape  # (5, 9, 13)
+        grid_shape = observation_space["grid"].shape
         self.rows, self.cols, self.channels = grid_shape
         self.global_dim = observation_space["global_features"].shape[0]  # 71
         
@@ -180,25 +180,25 @@ class PVZAttentionExtractor(BaseFeaturesExtractor):
         self.last_memory_weights = None
 
     def forward(self, observations: dict) -> torch.Tensor:
-        grid = observations["grid"]  # (B, 5, 9, 13)
+        grid = observations["grid"]  # (B, rows, cols, channels)
         bsz = grid.shape[0]
         
         # === 1. 提取威胁热力图 (通道11) ===
         threat_channel_idx = 11
         if grid.shape[-1] > threat_channel_idx:
-            threat_map = grid[..., threat_channel_idx:threat_channel_idx+1]  # (B, 5, 9, 1)
+            threat_map = grid[..., threat_channel_idx:threat_channel_idx+1]
         else:
             threat_map = torch.zeros(bsz, self.rows, self.cols, 1, device=grid.device)
         
-        threat_flat = threat_map.view(bsz, self.rows * self.cols, 1)  # (B, 45, 1)
+        threat_flat = threat_map.view(bsz, self.rows * self.cols, 1)
         
         # === 2. Grid Embedding + 可学习门控威胁注入 ===
-        seq = grid.view(bsz, self.rows * self.cols, self.channels)  # (B, 45, 13)
-        base = self.grid_embed(seq)  # (B, 45, 128)
+        seq = grid.view(bsz, self.rows * self.cols, self.channels)
+        base = self.grid_embed(seq)
         
         # 威胁门控注入 (比固定系数更智能)
-        threat_gate = self.threat_gate(threat_flat)  # (B, 45, 128), sigmoid门控
-        threat_proj = self.threat_proj(threat_flat)  # (B, 45, 128), 威胁投影
+        threat_gate = self.threat_gate(threat_flat)  # sigmoid门控
+        threat_proj = self.threat_proj(threat_flat)  # 威胁投影
         base = base + threat_gate * threat_proj  # 门控加权
         
         # === 3. 位置编码 ===
@@ -207,12 +207,12 @@ class PVZAttentionExtractor(BaseFeaturesExtractor):
         pos = self.row_embed(row_ids) + self.col_embed(col_ids)
         pos = pos.unsqueeze(0).expand(bsz, -1, -1)
         
-        x = base + pos  # (B, 45, 128)
+        x = base + pos
         
         # === 4. 拼接 [CLS] + 多尺度Zone Tokens ===
         cls_tokens = self.cls_token.expand(bsz, -1, -1)  # (B, 1, 128)
         zone_tokens = self.zone_tokens.expand(-1, bsz, -1).transpose(0, 1)  # (B, 3, 128)
-        x = torch.cat([cls_tokens, zone_tokens, x], dim=1)  # (B, 4+45=49, 128)
+        x = torch.cat([cls_tokens, zone_tokens, x], dim=1)
         
         # === 5. Grid Self-Attention ===
         for i, layer in enumerate(self.grid_layers):
@@ -222,7 +222,7 @@ class PVZAttentionExtractor(BaseFeaturesExtractor):
             if i == len(self.grid_layers) - 1 and not self.training:
                 with torch.no_grad():
                     _, weights = layer.self_attn(x, x, x, need_weights=True, average_attn_weights=True)
-                    self.last_attn_weights = weights[:, 0, 4:]  # CLS对45个格子的注意力
+                    self.last_attn_weights = weights[:, 0, 4:]  # CLS对网格格子的注意力
         
         # 提取特征
         cls_feat = x[:, 0]  # (B, 128) - CLS Token
@@ -262,10 +262,10 @@ class PVZAttentionExtractor(BaseFeaturesExtractor):
         cls_feat_enhanced = self.cross_norm(cls_feat + cross_out.squeeze(1))  # 残差连接
         
         # === 9. 短期记忆 (LSTM) ===
-        # 扩展 batch 维度的隐藏状态
+        # 同一个 PPO rollout 中，正常前向是 n_envs batch；terminal value 估计可能是 batch=1。
+        # 不能用 expand 从 batch=4 缩到 batch=1，只能在 batch 变化时重建临时记忆。
         if self.lstm_h.shape[1] != bsz:
-            self.lstm_h = self.lstm_h.expand(-1, bsz, -1).contiguous()
-            self.lstm_c = self.lstm_c.expand(-1, bsz, -1).contiguous()
+            self.reset_memory(batch_size=bsz, device=grid.device)
         
         lstm_input = cls_feat_enhanced.unsqueeze(1)  # (B, 1, 128)
         lstm_out, (h_new, c_new) = self.lstm(lstm_input, (self.lstm_h, self.lstm_c))
@@ -276,10 +276,9 @@ class PVZAttentionExtractor(BaseFeaturesExtractor):
         self.lstm_c = c_new.detach()
         
         # === 10. 长期记忆 (Memory Bank) ===
-        # 扩展 batch 维度的记忆库
+        # batch 数变化时，上面的 reset_memory 已经同步重建 memory_bank。
         if self.memory_bank.shape[0] != bsz:
-            self.memory_bank = self.memory_bank.expand(bsz, -1, -1).contiguous()
-            self.memory_ptr = self.memory_ptr.expand(bsz).contiguous()
+            self.reset_memory(batch_size=bsz, device=grid.device)
         
         # 查询记忆库 (当前状态 ↔ 历史记忆)
         query = cls_feat_enhanced.unsqueeze(1)  # (B, 1, 128)

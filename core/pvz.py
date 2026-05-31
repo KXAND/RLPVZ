@@ -45,6 +45,7 @@ class PVZInterface:
         mode: InterfaceMode = InterfaceMode.HOOK,
         hook_port: int = 12345,
         target_pid: Optional[int] = None,
+        connect_hook_client: bool = True,
     ):
         """
         Initialize interface
@@ -55,6 +56,7 @@ class PVZInterface:
         self.mode = mode
         self.hook_port = hook_port
         self.target_pid = target_pid
+        self.connect_hook_client = connect_hook_client
         self.logger = get_logger()
         
         if mode == InterfaceMode.HOOK:
@@ -125,12 +127,15 @@ class PVZInterface:
         self.reader = MemoryReader(kernel32, handle)
         self.writer = MemoryWriter(kernel32, handle)  # Enable writing in Hook mode too
         
-        # Connect to Hook DLL
-        self.hook_client = HookClient(port=self.hook_port)
-        if not self.hook_client.connect():
-            self.logger.warning("Hook DLL not connected. Make sure DLL is injected.")
-            # Don't fail - still allow reading
-        
+        # Connect to Hook DLL only when the caller needs command execution here.
+        # PVZEnv owns its own HookClient; opening a second socket to the same
+        # DLL closes the previous one because the DLL currently keeps one client.
+        if self.connect_hook_client:
+            self.hook_client = HookClient(port=self.hook_port)
+            if not self.hook_client.connect():
+                self.logger.warning("Hook DLL not connected. Make sure DLL is injected.")
+                # Don't fail - still allow reading
+
         return True
     
     def _attach_legacy(self) -> bool:

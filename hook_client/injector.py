@@ -6,6 +6,8 @@ DLL Injector
 
 import os
 import ctypes
+import socket
+import time
 from ctypes import wintypes
 import psutil
 import logging
@@ -27,6 +29,17 @@ MEM_RESERVE = 0x2000
 MEM_RELEASE = 0x8000
 PAGE_READWRITE = 0x04
 INFINITE = 0xFFFFFFFF
+
+
+def _wait_for_hook_port(port: int, timeout: float = 3.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", int(port)), timeout=0.5):
+                return True
+        except OSError:
+            time.sleep(0.1)
+    return False
 
 
 def list_pvz_processes() -> List[int]:
@@ -162,6 +175,12 @@ def inject_dll(
         for module in p.memory_maps():
             if dll_name == os.path.basename(module.path).lower():
                 logger.info(f"DLL already injected: {module.path}")
+                if port is not None and not _wait_for_hook_port(port):
+                    logger.error(
+                        f"DLL is loaded but hook port {port} is not listening. "
+                        "Restart this PVZ process before training."
+                    )
+                    return False
                 return True
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         logger.warning("Could not check loaded modules (AccessDenied), proceeding with injection...")
@@ -453,6 +472,12 @@ def inject_dll(
         logger.info("DLL injected successfully!")
         if port is not None:
             logger.info(f"Hook DLL should be listening on port {port}")
+            if not _wait_for_hook_port(port):
+                logger.error(
+                    f"Hook DLL loaded but port {port} is not listening. "
+                    "The bridge may have failed to initialize."
+                )
+                return False
         else:
             logger.info("Hook DLL should be listening on its configured port")
         return True

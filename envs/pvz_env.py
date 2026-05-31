@@ -15,7 +15,7 @@ from utils.logger import write_file_line
 
 from hook_client import HookClient
 from hook_client.injector import find_pvz_process, inject_dll, list_pvz_processes
-from core import PVZInterface, InterfaceMode
+from pvz_interface import PVZInterface, InterfaceMode
 from data.plants import PlantType, PLANT_COST
 from data.zombies import ZombieType, ZOMBIE_BASE_SPEED
 from data.projectiles import ProjectileType, PROJECTILE_DAMAGE

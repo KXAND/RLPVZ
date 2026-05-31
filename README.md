@@ -127,7 +127,7 @@ DDQN 默认每 `500` 个 episode 保存一次周期 checkpoint，可通过 `--dd
 ```text
 callbacks/             PPO 和训练回调
 config/                YAML 配置
-core/                  PVZ 高层接口
+pvz_interface/         PVZ 高层接口
 data/                  植物、僵尸、偏移量等数据
 engine/                动作定义与执行逻辑
 envs/                  Gymnasium 环境

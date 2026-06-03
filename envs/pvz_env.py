@@ -78,7 +78,7 @@ class PVZEnv(gym.Env):
     PVZ Gym 环境
     
     观测空间:
-        - grid: 从 config/training_config.yaml 读取的网格特征
+        - grid: 从 training_config.yaml 读取的网格特征
         - global_features: 从配置读取的全局特征
     
     动作空间:
@@ -90,7 +90,7 @@ class PVZEnv(gym.Env):
     
     def __init__(
         self,
-        config_path: str = "config/training_config.yaml",
+        config_path: str = "training_config.yaml",
         render_mode: Optional[str] = None,
         frame_skip: int = 24,  # 每4帧决策一次，减少通信开销
         max_steps: int = 10000,
@@ -252,7 +252,11 @@ class PVZEnv(gym.Env):
         self.kill_heatmap = np.zeros((self.rows, self.cols), dtype=np.float32)
 
         # 游戏路径配置 (用于自动重启)
-        self.pvz_exe_path = self.config.get('game', {}).get('exe_path', None)
+        train_args = self.config.get('training', {}).get('args', {})
+        self.pvz_exe_path = train_args.get(
+            'game_path',
+            self.config.get('game', {}).get('exe_path', None),
+        )
         self._last_restart_time = 0  # 上次重启时间，防止频繁重启
         
         # 回合状态追踪
@@ -334,7 +338,7 @@ class PVZEnv(gym.Env):
                     return False
             else:
                 self._emit(f"[DEBUG] 游戏路径未配置或不存在: {self.pvz_exe_path}", console_level=1, log_level=1)
-                self._emit("[DEBUG] 请在 config/training_config.yaml 中设置 game.exe_path", console_level=1, log_level=1)
+                self._emit("[DEBUG] 请在 training_config.yaml 中设置 training.args.game_path", console_level=1, log_level=1)
                 return False
 
         # 等待游戏完全加载

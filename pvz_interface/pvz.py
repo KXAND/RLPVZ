@@ -7,7 +7,6 @@ import time
 from typing import Optional
 from enum import Enum
 
-from config import BotConfig
 from utils.logger import get_logger
 
 # Import game state modules

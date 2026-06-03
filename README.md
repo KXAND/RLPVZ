@@ -22,7 +22,7 @@
 - GPU：可使用 CUDA
 - 需要能够运行多个 PVZ 进程时，请确保端口、进程和 DLL 注入权限正常
 
-本项目不提供游戏本体。请自行准备合法游戏文件，并在 `config/training_config.yaml` 或相关参数中配置路径。
+本项目不提供游戏本体。请自行准备合法游戏文件，并在 `training_config.yaml` 或相关参数中配置路径。
 
 ## 安装
 
@@ -70,8 +70,13 @@ DDQN 多进程示例：
 
 主要配置文件：
 
-- `config/training_config.yaml`：游戏模式、地图、卡组等训练配置。
-- `training/defaults.py`：训练入口使用的默认路径和基础配置。
+- `training_config.yaml`：游戏模式、地图、卡组、训练默认参数等配置。
+
+参数优先级：
+
+```text
+CLI 显式输入 > `training_config.yaml`
+```
 
 常用参数：
 
@@ -85,7 +90,7 @@ DDQN 多进程示例：
 - `--env_console_log_level`：控制台环境日志等级。
 - `--file_log_level`：文件日志等级。
 - `--execution`：训练执行策略。当前 PPO 使用 `sb3_vec_env`，DDQN 使用 `async_worker_pool`，`auto` 会选择算法默认策略。
-- `--curriculum`：课程学习扩展点。当前重构分支只支持 `none`，不实现具体课程学习策略。
+- `--curriculum`：课程学习扩展点（待实现）。
 
 ## 输出文件
 
@@ -125,7 +130,6 @@ DDQN 默认每 `500` 个 episode 保存一次周期 checkpoint，可通过 `--dd
 
 ```text
 callbacks/             PPO 和训练回调
-config/                YAML 配置
 pvz_interface/         PVZ 高层接口
 data/                  植物、僵尸、偏移量等数据
 envs/                  Gymnasium 环境
@@ -135,8 +139,8 @@ hook/                  C++ Hook 动态库和对应源码
 hook_client/           Python Hook 客户端和 DLL 注入逻辑
 memory/                进程附加与内存读写
 models/                模型实现
-  models/ddqn/           DDQN、异步训练器和环境适配器
-  models/ppo/            PPO 环境、模型构建和训练入口
+  models/ddqn/         DDQN、异步训练器和环境适配器
+  models/ppo/          PPO 环境、模型构建和训练入口
 models_output/         模型、checkpoint 和训练曲线输出
 tools/                 独立辅助工具
 utils/                 日志、绘图、坐标、伤害等通用工具
@@ -178,7 +182,7 @@ DDQN 当前使用异步 actor-learner 结构：
 - Hook 和内存偏移依赖 PVZ `v1.0.0.1051`，请严格确保版本号正确。
 - 如果某个 worker 失效，当前逻辑会将其移除并继续训练；新启动的 PVZ 进程不会被自动接管。
 - 游戏窗口、Hook 通信和 Python worker 会显著占用 CPU；可能会限制 CUDA 利用率。
-- `environment.yml` 仍保留原 conda 配置思路，当前推荐以 `.venv` 和 `requirements.txt` 为准。
+- 当前推荐以 `.venv` 和 `requirements.txt` 管理 Python 依赖。
 
 ## 常见问题
 

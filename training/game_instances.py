@@ -6,7 +6,6 @@ import psutil
 
 from hook_client import inject_dll
 from hook_client.injector import find_pvz_process, list_pvz_processes
-from .defaults import DEFAULT_GAME_PATH
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -71,11 +70,11 @@ def launch_game_and_inject(
     port: int = 12345,
     pid: int = None,
 ) -> bool:
-    if game_path is None:
-        game_path = DEFAULT_GAME_PATH
-
     pid = pid or find_pvz_process()
     if not pid:
+        if not game_path:
+            print("[错误] 未配置游戏路径，请在 training_config.yaml 的 training.args.game_path 中设置")
+            return False
         if not os.path.exists(game_path):
             print(f"[错误] 游戏文件不存在: {game_path}")
             return False

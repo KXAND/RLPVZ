@@ -66,6 +66,60 @@ DDQN 多进程示例：
 .\.venv\Scripts\python.exe train.py --algo ddqn --no_auto_start
 ```
 
+## 仿真环境（SimPVZEnv）
+
+为了快速验证算法思路和超参数，本项目内置了一个**简化版 PVZ 仿真环境**，不依赖游戏进程、Hook DLL 和内存读取。所有游戏逻辑（植物、僵尸、飞行物、阳光、冷却、波次生成）均由纯 Python 模拟。
+
+### 特点
+
+- **零依赖启动**：无需安装游戏、无需注入 DLL、无需配置进程 PID
+- **高速运行**：无 gym wrapper 校验开销，无渲染数据采集，每步仅做游戏帧计算
+- **与真实环境一致的博弈规则**：相同的植物/僵尸/飞行物行为、相同的波次递增难度、相同的动作空间和奖励结构
+- **兼容 DDQN 训练接口**：`reset()` → 状态向量，`step()` → (state, reward, done, info)，`mask_available_actions()` → 动作掩码
+
+### 快速开始
+
+```powershell
+.\.venv\Scripts\python.exe train_sim_ddqn.py
+```
+
+训练脚本默认参数：5 万 episode、batch size 200、buffer 容量 10 万。模型和训练曲线保存在 `saved/` 目录。
+
+### 仿真环境参数
+
+| 参数 | 值 | 说明 |
+|---|---|---|
+| 网格 | 5×9 | 行×列 |
+| 植物 | 向日葵/豌豆射手/坚果墙/土豆雷 | 4 种 |
+| 僵尸 | 普通/路障/铁桶/旗帜 | 4 种，含护甲蜕变机制 |
+| 动作空间 | 181 (4×5×9 + 1) | Discrete |
+| 观测维度 | 95 | `[plant_grid(45), zombie_hp(45), plant_avail(4), sun_norm(1)]` |
+| 生成器 | WaveZombieSpawner | 波次递增难度 |
+| 最大帧数 | 400 | 单局上限 |
+
+### 真机环境 vs 仿真环境
+
+| 方面 | 真机环境 | 仿真环境 |
+|---|---|---|
+| 启动速度 | 需启动游戏 × N 个实例 | 瞬间 |
+| 网格 | 6×9（含泳池） | 5×9 |
+| 植物数 | 10 种 | 4 种 |
+| 观测维度 | 119 | 95 |
+| 动作数 | 451+ | 181 |
+| 并行 | 多进程（每 worker 一个游戏） | 单进程 |
+| 适用场景 | 最终训练、评估 | 快速实验、超参调试 |
+
+### Python API
+
+```python
+from simenv import SimPVZEnv
+
+env = SimPVZEnv()
+state = env.reset()          # float32[95]
+mask  = env.mask_available_actions()  # bool[181]
+next_state, reward, done, info = env.step(action)
+```
+
 ## 配置
 
 主要配置文件：
@@ -142,9 +196,12 @@ models/                模型实现
   models/ddqn/         DDQN、异步训练器和环境适配器
   models/ppo/          PPO 环境、模型构建和训练入口
 models_output/         模型、checkpoint 和训练曲线输出
+simenv/                仿真环境（纯 Python PVZ 模拟）
+  simenv/pvz_sim/      仿真游戏引擎（实体、场景、网格、移动）
 tools/                 独立辅助工具
 utils/                 日志、绘图、坐标、伤害等通用工具
 train.py               统一训练入口
+train_sim_ddqn.py      仿真环境 DDQN 训练脚本
 training/              训练生命周期、日志、checkpoint、metrics 和运行准备
 AGENTS.md              Agents 开发协作规则
 ```

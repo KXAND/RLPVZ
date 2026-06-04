@@ -13,8 +13,9 @@ from simenv.trainer import train_sim
 
 if __name__ == "__main__":
     train_sim(
-        max_episodes=60000,
-        buffer_size=60000,
+        max_episodes=50000,
+        buffer_size=10000,
         burn_in=10000,
         batch_size=200,
+        network_type="cnn", # cnn / mlp / deepmlp
     )

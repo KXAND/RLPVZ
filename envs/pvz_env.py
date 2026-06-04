@@ -15,7 +15,7 @@ from utils.logger import write_file_line
 
 from hook_client import HookClient
 from hook_client.injector import find_pvz_process, inject_dll, list_pvz_processes
-from core import PVZInterface, InterfaceMode
+from pvz_interface import PVZInterface, InterfaceMode
 from data.plants import PlantType, PLANT_COST
 from data.zombies import ZombieType, ZOMBIE_BASE_SPEED
 from data.projectiles import ProjectileType, PROJECTILE_DAMAGE
@@ -78,20 +78,19 @@ class PVZEnv(gym.Env):
     PVZ Gym 环境
     
     观测空间:
-        - grid: (5, 9, 4) 网格特征
-        - global_features: (23,) 全局特征
+        - grid: 从 training_config.yaml 读取的网格特征
+        - global_features: 从配置读取的全局特征
     
     动作空间:
-        - 0-449: 种植动作 (10卡 × 45格)
-        - 450-494: 铲除动作 (45格)
-        - 495: 等待
+        - 0-539: 种植动作 (10卡 × 54格)
+        - 540: 等待
     """
     
     metadata = {"render_modes": ["human"], "render_fps": 10}
     
     def __init__(
         self,
-        config_path: str = "config/training_config.yaml",
+        config_path: str = "training_config.yaml",
         render_mode: Optional[str] = None,
         frame_skip: int = 24,  # 每4帧决策一次，减少通信开销
         max_steps: int = 10000,
@@ -132,9 +131,9 @@ class PVZEnv(gym.Env):
         self.pvz: Optional[PVZInterface] = None
         
         # 游戏参数
-        self.rows = self.config['game']['rows']  # 5
-        self.cols = self.config['game']['cols']  # 9
-        self.num_cards = self.config['cards']['slot_count']  # 10
+        self.rows = self.config['game']['rows']
+        self.cols = self.config['game']['cols']
+        self.num_cards = self.config['cards']['slot_count']
         self.game_mode = self.config['game']['game_mode_id']  # 11
         self.initial_sun = self.config['game'].get('initial_sun')
         if self.initial_sun is None:
@@ -145,34 +144,45 @@ class PVZEnv(gym.Env):
         self.card_plant_ids = [p['id'] for p in self.config['cards']['plants']]
         self.card_costs = [p['cost'] for p in self.config['cards']['plants']]
         
-        # 动作空间: 10卡×45格 + 铲子×0格 + 等待 = 451
-        self.n_plant_actions = self.num_cards * self.rows * self.cols  # 450
-        self.n_shovel_actions = 0 # self.rows * self.cols  # 禁用铲子
-        self.n_actions = self.n_plant_actions + self.n_shovel_actions + 1  # 451
+        # 动作空间: 种植动作 + 可选铲子动作 + 等待
+        action_structure = self.config.get('action_space', {}).get('structure', {})
+        self.n_plant_actions = self.num_cards * self.rows * self.cols
+        self.n_shovel_actions = int(action_structure.get('shovel_actions', 0))
+        self.n_wait_actions = int(action_structure.get('wait_action', 1))
+        if self.n_shovel_actions != 0:
+            raise ValueError("当前 action mask 未启用铲子动作，请将 shovel_actions 设为 0")
+        if self.n_wait_actions != 1:
+            raise ValueError("当前环境仅支持 1 个等待动作")
+        self.n_actions = self.n_plant_actions + self.n_shovel_actions + self.n_wait_actions
+        configured_actions = self.config.get('action_space', {}).get('size')
+        if configured_actions is not None and int(configured_actions) != self.n_actions:
+            raise ValueError(
+                f"action_space.size 不匹配: expected {self.n_actions}, "
+                f"got {configured_actions}"
+            )
         
         self.action_space = spaces.Discrete(self.n_actions)
         
         # 观测空间 (增强版)
         obs_config = self.config.get('observation_space', {})
-        # 默认升级为 13 通道
-        grid_shape = obs_config.get('grid', {}).get('shape', [5, 9, 13])
+        grid_shape = obs_config.get('grid', {}).get('shape', [self.rows, self.cols, 13])
         global_dim = obs_config.get('global', {}).get('total_dim', 71)  # 增加新特征
-        card_attr_shape = obs_config.get('card_attributes', {}).get('shape', [10, 7])  # 增加子弹类型
+        card_attr_shape = obs_config.get('card_attributes', {}).get('shape', [self.num_cards, 7])  # 增加子弹类型
         
         self.observation_space = spaces.Dict({
-            # 网格特征: 5行×9列×13通道 (增强)
+            # 网格特征: 行×列×通道 (增强)
             "grid": spaces.Box(
                 low=0.0, high=1.0,
                 shape=tuple(grid_shape),
                 dtype=np.float32
             ),
-            # 全局特征: 54维 (增强)
+            # 全局特征
             "global_features": spaces.Box(
                 low=0.0, high=1.0,
                 shape=(global_dim,),
                 dtype=np.float32
             ),
-            # 卡片属性特征: 10张卡×7属性 (Cost, HP, Damage, Range, Cooldown, Role, ProjectileType)
+            # 卡片属性特征: 卡片数×属性数 (Cost, HP, Damage, Range, Cooldown, Role, ProjectileType)
             "card_attributes": spaces.Box(
                 low=0.0, high=1.0,
                 shape=tuple(card_attr_shape),
@@ -242,7 +252,11 @@ class PVZEnv(gym.Env):
         self.kill_heatmap = np.zeros((self.rows, self.cols), dtype=np.float32)
 
         # 游戏路径配置 (用于自动重启)
-        self.pvz_exe_path = self.config.get('game', {}).get('exe_path', None)
+        train_args = self.config.get('training', {}).get('args', {})
+        self.pvz_exe_path = train_args.get(
+            'game_path',
+            self.config.get('game', {}).get('exe_path', None),
+        )
         self._last_restart_time = 0  # 上次重启时间，防止频繁重启
         
         # 回合状态追踪
@@ -324,7 +338,7 @@ class PVZEnv(gym.Env):
                     return False
             else:
                 self._emit(f"[DEBUG] 游戏路径未配置或不存在: {self.pvz_exe_path}", console_level=1, log_level=1)
-                self._emit("[DEBUG] 请在 config/training_config.yaml 中设置 game.exe_path", console_level=1, log_level=1)
+                self._emit("[DEBUG] 请在 training_config.yaml 中设置 training.args.game_path", console_level=1, log_level=1)
                 return False
 
         # 等待游戏完全加载
@@ -387,6 +401,7 @@ class PVZEnv(gym.Env):
                 mode=InterfaceMode.HOOK,
                 hook_port=self.hook_port,
                 target_pid=self.target_pid,
+                connect_hook_client=False,
             )
             if not self.pvz.attach():
                 self._emit("[PVZEnv] 错误: 无法附加到PVZ进程", console_level=1, log_level=1)
@@ -413,6 +428,7 @@ class PVZEnv(gym.Env):
                 mode=InterfaceMode.HOOK,
                 hook_port=self.hook_port,
                 target_pid=self.target_pid,
+                connect_hook_client=False,
             )
             if not self.pvz.attach():
                 self._emit("[PVZEnv] 错误: 无法附加到PVZ进程", console_level=1, log_level=1)
@@ -1122,7 +1138,7 @@ class PVZEnv(gym.Env):
             game_state = self.pvz.get_game_state() if self.pvz else None
         
         if action < self.n_plant_actions:
-            # 种植动作: action = card_idx * 45 + row * 9 + col
+            # 种植动作: action = card_idx * grid_size + row * cols + col
             card_idx = action // (self.rows * self.cols)
             cell_idx = action % (self.rows * self.cols)
             row = cell_idx // self.cols
@@ -1380,20 +1396,23 @@ class PVZEnv(gym.Env):
         
         # 从配置获取维度
         obs_config = self.config.get('observation_space', {})
-        grid_shape = obs_config.get('grid', {}).get('shape', [5, 9, 8])
+        grid_shape = obs_config.get('grid', {}).get('shape', [self.rows, self.cols, 13])
         global_dim = obs_config.get('global', {}).get('total_dim', 71)  # 增加新特征
+        card_attr_shape = tuple(
+            obs_config.get('card_attributes', {}).get('shape', [self.num_cards, 7])
+        )
         
-        # 网格特征 (增强到8通道)
+        # 网格特征
         grid = np.zeros(tuple(grid_shape), dtype=np.float32)
         
-        # 全局特征 (增强到54维)
+        # 全局特征
         global_features = np.zeros(global_dim, dtype=np.float32)
         
         # 动作掩码
         action_mask = self._get_action_mask(game_state)
         
-        # 卡片属性特征 (10张卡 × 7属性)
-        card_attributes = np.zeros((10, 7), dtype=np.float32)
+        # 卡片属性特征 (卡片数 × 属性数)
+        card_attributes = np.zeros(card_attr_shape, dtype=np.float32)
         
         if game_state:
             # 填充网格特征
@@ -1405,7 +1424,7 @@ class PVZEnv(gym.Env):
             # 填充卡片属性特征
             # 归一化因子: Cost/500, HP/4000, Dmg/1800, Range/9, CD/5000, Role/5, ProjType/5
             for i, card_id in enumerate(self.card_plant_ids):
-                if i < 10:
+                if i < card_attr_shape[0] and card_attr_shape[1] >= 7:
                     stats = self.plant_stats.get(card_id, self.plant_stats[-1])
                     card_attributes[i, 0] = stats[0] / 500.0   # Cost
                     card_attributes[i, 1] = stats[1] / 4000.0  # HP
@@ -1446,7 +1465,7 @@ class PVZEnv(gym.Env):
         数据利用率：96%
         """
         obs_config = self.config.get('observation_space', {})
-        grid_shape = obs_config.get('grid', {}).get('shape', [5, 9, 13])
+        grid_shape = obs_config.get('grid', {}).get('shape', [self.rows, self.cols, 13])
         grid = np.zeros(tuple(grid_shape), dtype=np.float32)
         n_channels = grid_shape[2]
         
@@ -1755,7 +1774,7 @@ class PVZEnv(gym.Env):
         idx += 1
         
         # 9. 植物总数 (归一化)
-        features[idx] = min(1.0, len(game_state.plants) / 45.0)  # 最多45格
+        features[idx] = min(1.0, len(game_state.plants) / max(1, self.rows * self.cols))
         idx += 1
         
         # 10. 小推车状态 (5维，每行一个)

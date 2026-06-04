@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 from sb3_contrib import MaskablePPO
-from models.attention_extractor import PVZAttentionExtractor
+from models.ppo.attention_extractor import PVZAttentionExtractor
 
 
 def linear_schedule(initial_value: float):
@@ -50,7 +50,7 @@ def cosine_schedule(initial_value: float, warmup_steps: int = 0, total_steps: in
     return func
 
 
-def get_model(args, env, device):
+def get_model(args, env, device, load_path=None):
     # 网络配置 - 激进版本
     net_configs = {
         "small": dict(pi=[256, 256], vf=[256, 256]),
@@ -76,7 +76,7 @@ def get_model(args, env, device):
             ),
         )
 
-    load_path = args.load
+    load_path = load_path if load_path is not None else args.load
     if load_path:
         print(f"加载模型: {load_path}")
         try:

@@ -12,8 +12,6 @@ game:
   rows: 6                       # 行数 (泳池6行)
   cols: 9                       # 列数
   initial_sun: 50               # 初始阳光
-  # 游戏可执行文件路径 (用于自动重启，如果游戏崩溃)
-  exe_path: "C:/GitLibrary/TranfsormerPVZ/gameobj/PlantsVsZombies.exe"
 
 # =============================================================================
 # 卡槽配置 (10张卡)
@@ -93,13 +91,14 @@ cards:
 # =============================================================================
 action_space:
   type: "discrete"
-  # 10张卡 × 54格 (6行×9列) + 铲子×54格 + 等待
-  # = 540 + 54 + 1 = 595 动作
-  size: 595
+  # 10张卡 × 54格 (6行×9列) + 等待
+  # = 540 + 1 = 541 动作
+  # 当前环境实现禁用铲子动作，避免动作空间和 mask 不一致。
+  size: 541
   
   structure:
     plant_actions: 540          # 种植动作 (10卡 × 54格)
-    shovel_actions: 54          # 铲除动作 (54格)
+    shovel_actions: 0           # 当前禁用铲除动作
     wait_action: 1              # 等待动作
 
 # =============================================================================
@@ -196,22 +195,61 @@ rewards:
 # 训练配置
 # =============================================================================
 training:
-  algorithm: "MaskablePPO"      # 算法
-  total_timesteps: 1000000      # 总训练步数
+  args:
+    algo: "ddqn"                # 默认算法: ppo 或 ddqn
+    port: 12345
+    num_envs: 1
+    base_port: 12345
+    ports: ""
+    pids: ""
+    no_auto_start: false
+    game_path: "gameobj/PlantsVsZombies.exe"
+    wait_time: 3.0
+    speed: 10.0
+    frameskip: 4
+    no_auto_resume: false
+    env_console_log_level: 0
+    file_log_level: 1
+    execution: "auto"
+    curriculum: "none"
   
-  # PPO 超参数 (最大化GPU利用率)
   ppo:
-    learning_rate: 0.0003
-    n_steps: 256                # 更小的采集批次，更频繁更新
-    batch_size: 256             # batch_size = n_steps，一次处理全部
-    n_epochs: 20                # 增加epoch，让GPU多训练几轮
-    gamma: 0.99
-    gae_lambda: 0.95
-    clip_range: 0.2
-    ent_coef: 0.01
-    
-  # 环境配置
+    timesteps: 500000
+    batch: 1024
+    n_steps: 4096
+    n_epochs: 20
+    net: "large"
+    lr: 0.0003
+    start_ent: 0.15
+    end_ent: 0.01
+    ent_decay: "linear"
+    diversify: 0.0
+    no_diversify: true
+    no_failure_priority: false
+    save_freq: 10000
+    ppo_plot_freq: 20
+    ppo_plot_path: null
+    save_path: null
+    load: null
+    no_attn: false
+
+  ddqn:
+    ddqn_episodes: 200000
+    ddqn_gamma: 0.99
+    ddqn_batch_size: 32
+    ddqn_buffer_size: 50000
+    ddqn_burn_in: 10000
+    ddqn_lr: 0.001
+    ddqn_update_freq: 32
+    ddqn_sync_freq: 2000
+    ddqn_eval_freq: 20
+    ddqn_eval_iters: 5
+    ddqn_checkpoint_freq: 500
+    ddqn_plot_freq: 20
+    ddqn_plot_path: null
+    ddqn_save_path: null
+    ddqn_load_path: null
+
   env:
-    frame_skip: 60              # 4帧决策一次 (标准设置，避免决策过于频繁)
     max_steps: 10000            # 最大步数
     normalize_obs: true         # 归一化观测

@@ -10,8 +10,8 @@
 - DDQN 路径已接入当前环境，训练入口为 `train.py --algo ddqn`。
 - DDQN 使用异步 actor-learner 架构：每个 PVZ 进程对应一个 worker，主进程作为 learner 统一更新网络。
 - 训练支持自动保存、异常保存、按 episode 周期 checkpoint 和自动恢复。
-- 训练日志写入 `logs/`，模型输出写入 `models_output/`。
-- DDQN 训练曲线会拆分输出 reward、单局 reward、iteration 和 loss 图片。
+- 训练日志写入 `logs/`，模型、metrics 和训练曲线写入 `models_output/`。
+- 每次训练都会创建 `models_output/{algo}/runs/{timestamp}/`，记录本次 run 的 metadata、metrics 和训练曲线。
 - Hook 注入时会尝试开启 `background_running`，使游戏失焦后仍继续运行。
 
 ## 环境要求
@@ -22,7 +22,7 @@
 - GPU：可使用 CUDA
 - 需要能够运行多个 PVZ 进程时，请确保端口、进程和 DLL 注入权限正常
 
-本项目不提供游戏本体。请自行准备合法游戏文件，并在 `config/training_config.yaml` 或相关参数中配置路径。
+本项目不提供游戏本体。请自行准备合法游戏文件，并在 `training_config.yaml` 或相关参数中配置路径。
 
 ## 安装
 
@@ -124,9 +124,13 @@ next_state, reward, done, info = env.step(action)
 
 主要配置文件：
 
-- `config/training_config.yaml`：游戏模式、地图、卡组等训练配置。
-- `train_args.py`：命令行参数定义。
-- `train_config.py`：训练入口使用的默认路径和基础配置。
+- `training_config.yaml`：游戏模式、地图、卡组、训练默认参数等配置。
+
+参数优先级：
+
+```text
+CLI 显式输入 > `training_config.yaml`
+```
 
 常用参数：
 
@@ -139,6 +143,8 @@ next_state, reward, done, info = env.step(action)
 - `--no_auto_resume`：禁用自动恢复模型。
 - `--env_console_log_level`：控制台环境日志等级。
 - `--file_log_level`：文件日志等级。
+- `--execution`：训练执行策略。当前 PPO 使用 `sb3_vec_env`，DDQN 使用 `async_worker_pool`，`auto` 会选择算法默认策略。
+- `--curriculum`：课程学习扩展点（待实现）。
 
 ## 输出文件
 
@@ -152,13 +158,24 @@ models_output/
   ddqn/
     latest_model.pt
     episode_*.pt
-    training_curve_rewards.png
-    training_curve_episode_rewards.png
-    training_curve_iterations.png
-    training_curve_loss.png
+    runs/
+      YYYYMMDD_HHMMSS/
+        run_metadata.json
+        metrics.jsonl
+        metrics.csv
+        metrics_snapshot.json
+        training_curve.png
   ppo/
     latest_model.zip
     latest_model_vecnormalize.pkl
+    runs/
+      YYYYMMDD_HHMMSS/
+        run_metadata.json
+        metrics.jsonl
+        metrics.csv
+        metrics_snapshot.json
+        training_curve.png
+        heatmap.html
 ```
 
 DDQN 默认每 `500` 个 episode 保存一次周期 checkpoint，可通过 `--ddqn_checkpoint_freq` 调整。
@@ -167,19 +184,19 @@ DDQN 默认每 `500` 个 episode 保存一次周期 checkpoint，可通过 `--dd
 
 ```text
 callbacks/             PPO 和训练回调
-config/                YAML 配置
-core/                  PVZ 高层接口
+pvz_interface/         PVZ 高层接口
 data/                  植物、僵尸、偏移量等数据
-engine/                动作定义与执行逻辑
 envs/                  Gymnasium 环境
 game/                  游戏对象状态建模
 gameobj/               游戏文件目录
-hook/                  C++ Hook 源码
+hook/                  C++ Hook 动态库和对应源码
 hook_client/           Python Hook 客户端和 DLL 注入逻辑
 memory/                进程附加与内存读写
 models/                模型实现
-models/ddqn/           DDQN、异步训练器和环境适配器
+  models/ddqn/         DDQN、异步训练器和环境适配器
+  models/ppo/          PPO 环境、模型构建和训练入口
 models_output/         模型、checkpoint 和训练曲线输出
+<<<<<<< HEAD
 ref/                   参考代码
 simenv/                仿真环境（纯 Python PVZ 模拟）
 simenv/pvz_sim/        仿真游戏引擎（实体、场景、网格、移动）
@@ -192,16 +209,42 @@ train_env.py           环境构建
 train_model.py         PPO 模型构建
 train_utils.py         训练准备、日志、checkpoint 和 metrics callback
 AGENTS.md              二次开发协作规则
+=======
+simenv/                仿真环境（纯 Python PVZ 模拟）
+  simenv/pvz_sim/      仿真游戏引擎（实体、场景、网格、移动）
+tools/                 独立辅助工具
+utils/                 日志、绘图、坐标、伤害等通用工具
+train.py               统一训练入口
+train_sim_ddqn.py      仿真环境 DDQN 训练脚本
+training/              训练生命周期、日志、checkpoint、metrics 和运行准备
+AGENTS.md              Agents 开发协作规则
+>>>>>>> origin/main
 ```
+
+## 训练框架
+
+训练入口统一从 `train.py` 进入。公共训练框架位于 `training/`，负责：
+
+- `TrainRunner`：统一训练生命周期、异常保存和收尾。
+- `AlgorithmSpec`：声明算法类型、执行策略、动作掩码和课程学习能力。
+- `EnvSpec` / `ScenarioSpec`：集中表达模型输入输出规格和训练场景。
+- `CheckpointManager`：统一恢复、缓存模型、周期 checkpoint 和异常保存入口。
+- `MetricsPipeline`：统一写入 `jsonl`、`csv`、snapshot 和训练曲线。
+
+PPO 和 DDQN 保留各自算法本质差异，不强行共用同一个训练循环。
+
+重构静态验收至少应检查 Python 编译、`train.py --help` 和算法 registry。静态检查不能替代真实 PVZ 训练回归。
 
 ## DDQN 训练架构
 
 DDQN 当前使用异步 actor-learner 结构：
 
 - worker 独占一个 PVZ 进程，负责 reset、step、动作执行和采样。
-- learner 位于主进程，维护 replay buffer、online network 和 target network。
+- learner 位于主进程，维护 online network、target network、loss 和 update。
+- async trainer 位于主进程，负责 replay buffer、worker queue、update/sync 调度、checkpoint 触发。
 - worker 将 transition 发送给 learner。
 - learner 定期更新网络，并向 worker 广播最新权重。
+- episode 统计、worker 状态、metrics 输出和控制台报告分别拆分到独立模块。
 
 这种结构用于避免单个游戏进程 reset 或 UI 准备耗时阻塞其他进程。
 
@@ -211,7 +254,7 @@ DDQN 当前使用异步 actor-learner 结构：
 - Hook 和内存偏移依赖 PVZ `v1.0.0.1051`，请严格确保版本号正确。
 - 如果某个 worker 失效，当前逻辑会将其移除并继续训练；新启动的 PVZ 进程不会被自动接管。
 - 游戏窗口、Hook 通信和 Python worker 会显著占用 CPU；可能会限制 CUDA 利用率。
-- `environment.yml` 仍保留原 conda 配置思路，当前推荐以 `.venv` 和 `requirements.txt` 为准。
+- 当前推荐以 `.venv` 和 `requirements.txt` 管理 Python 依赖。
 
 ## 常见问题
 
@@ -229,7 +272,7 @@ DDQN 当前使用异步 actor-learner 结构：
 
 **看不到训练曲线**
 
-DDQN 曲线默认按 `--ddqn_plot_freq` 周期刷新，输出在 `models_output/ddqn/`。
+训练曲线默认按 `--ddqn_plot_freq` 或 `--ppo_plot_freq` 周期刷新，输出在 `models_output/{algo}/runs/{timestamp}/`。
 
 ## 致谢
 

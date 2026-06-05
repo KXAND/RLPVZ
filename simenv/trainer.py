@@ -30,13 +30,14 @@ def train_sim(
     network_type="cnn",
     eval_episodes=100,
 ):
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     env = SimPVZEnv()
     if network_type == "cnn":
-        network = SimCNNQNetwork(env, learning_rate=lr, device="cpu")
+        network = SimCNNQNetwork(env, learning_rate=lr, device=device)
     elif network_type == "deepmlp":
-        network = SimDeepMLPNetwork(env, learning_rate=lr, device="cpu")
+        network = SimDeepMLPNetwork(env, learning_rate=lr, device=device)
     else:
-        network = SimQNetwork(env, learning_rate=lr, device="cpu",
+        network = SimQNetwork(env, learning_rate=lr, device=device,
                               use_zombienet=False, use_gridnet=False)
     target_network = deepcopy(network)
     buffer = ReplayBuffer(memory_size=buffer_size, burn_in=burn_in)
@@ -49,6 +50,7 @@ def train_sim(
 
     # ── Print training configuration ──
     _print_config(
+        device=device,
         network_type=network_type,
         network_params=sum(p.numel() for p in network.parameters()),
         max_episodes=max_episodes,
@@ -168,6 +170,7 @@ def _print_config(**cfg):
     print(f"\n{sep}")
     print(f"  Training Configuration")
     print(f"{sep}")
+    print(f"  {'Device:':24s} {cfg['device'].upper()}")
     print(f"  {'Network:':24s} {cfg['network_type']} ({cfg['network_params']:,} params)")
     print(f"  {'Max episodes:':24s} {cfg['max_episodes']}")
     print(f"  {'Buffer size:':24s} {cfg['buffer_size']}")

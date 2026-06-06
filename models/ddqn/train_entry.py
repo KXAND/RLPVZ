@@ -3,6 +3,12 @@ import os
 from training.execution import require_execution
 from training.registry import AlgorithmSpec
 
+# 实现
+# create_algorithm(): 返回当前算法的 Algorithm 实例。供 training.registry 动态创建。
+# spec: 声明算法名称、on/off-policy、是否支持课程学习、多进程等。
+# describe_config: 返回启动时需要打印的关键算法配置。
+# train: 接收 TrainContext，构建环境规格、模型、trainer，并启动训练。
+
 
 def _build_ddqn_env(args, instance=None, env_spec=None, scenario_spec=None):
     from envs import PVZEnv

@@ -1,6 +1,12 @@
 from training.registry import AlgorithmSpec
 from training.execution import require_execution
 
+# 实现
+# create_algorithm: 返回当前算法的 Algorithm 实例，供 training.registry 动态创建。
+# spec: 声明算法名称、策略类型、支持的执行策略和能力。
+# describe_config: 返回启动时需要打印的关键算法配置。
+# train: 接收 TrainContext，构建环境、模型、callback，并启动训练。
+
 
 class PPOAlgorithm:
     spec = AlgorithmSpec(

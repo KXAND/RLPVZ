@@ -1,5 +1,6 @@
 from training.registry import AlgorithmSpec
 from training.execution import require_execution
+from utils.train_utils import print_gpu_memory
 
 # 实现
 # create_algorithm: 返回当前算法的 Algorithm 实例，供 training.registry 动态创建。
@@ -30,7 +31,6 @@ class PPOAlgorithm:
     def train(self, context) -> None:
         from .env import get_env
         from .model import get_model
-        from training.device import print_gpu_memory
 
         require_execution(context.execution, "sb3_vec_env", "PPO")
         print("建环境...")
@@ -49,6 +49,7 @@ class PPOAlgorithm:
         context.artifacts.model = model
 
         print_gpu_memory()
+
         from .callbacks import build_callbacks
 
         callbacks = build_callbacks(

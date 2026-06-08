@@ -40,10 +40,9 @@ def train_sim(
     target_network = deepcopy(network)
     buffer = ReplayBuffer(memory_size=buffer_size, burn_in=burn_in)
 
-    # Estimate equivalent episodes for epsilon decay (avg ~200 steps per episode)
-    est_episodes = max(2, total_steps // 200)
+    # Epsilon decays over total_steps (step-based, not episode-based)
     threshold = Threshold(
-        seq_length=est_episodes,
+        seq_length=total_steps,
         start_epsilon=1.0,
         interpolation="exponential",
         end_epsilon=0.05,
@@ -108,7 +107,7 @@ def train_sim(
         rewards = 0
         done = False
         while not done and step_count < total_steps:
-            epsilon = threshold.epsilon(ep)
+            epsilon = threshold.epsilon(step_count)
             mask = np.array(env.mask_available_actions())
             action = network.decide_action(s_0, mask, epsilon=epsilon)
             s_1, r, done, _ = env.step(action)

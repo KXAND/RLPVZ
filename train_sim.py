@@ -1,21 +1,44 @@
 """
 Simulation environment training entry point.
 
-Usage: python train_sim.py
+Usage:
+    python train_sim.py            # DDQN (default)
+    python train_sim.py --ppo      # PPO
 """
 
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from simenv.trainer import train_sim
-
 
 if __name__ == "__main__":
-    train_sim(
-        max_episodes=50000,
-        buffer_size=10000,
-        burn_in=10000,
-        batch_size=200,
-        network_type="cnn", # cnn / mlp / deepmlp
-    )
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Train RL agent on SimPVZ")
+    parser.add_argument("--ppo", action="store_true",
+                        help="Use PPO instead of DDQN")
+    parser.add_argument("--algo", type=str, default="ddqn",
+                        choices=["ddqn", "ppo"],
+                        help="Algorithm to use (default: ddqn)")
+    args = parser.parse_args()
+
+    algo = "ppo" if args.ppo else args.algo
+
+    if algo == "ppo":
+        from simenv.ppo import train_ppo
+        train_ppo(
+            total_steps=1000000,
+            horizon=2048,
+            batch_size=64,
+            n_epochs=10,
+            network_type="mlp",  # cnn / mlp / deepmlp
+        )
+    else:
+        from simenv.trainer import train_sim
+        train_sim(
+            total_steps=2000000,
+            buffer_size=50000,
+            burn_in=10000,
+            batch_size=200,
+            network_type="mlp",  # cnn / mlp / deepmlp
+        )

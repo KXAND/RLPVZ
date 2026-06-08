@@ -16,7 +16,7 @@ from models.ddqn.threshold import Threshold
 
 
 def train_sim(
-    max_episodes=100000,
+    total_steps=1_000_000,
     buffer_size=100000,
     burn_in=10000,
     batch_size=200,
@@ -24,8 +24,6 @@ def train_sim(
     lr=1e-3,
     network_update_freq=32,
     network_sync_freq=2000,
-    eval_freq=5000,
-    eval_n_iter=200,
     save_path="saved/sim_ddqn.pt",
     network_type="cnn",
     eval_episodes=100,
@@ -41,8 +39,11 @@ def train_sim(
                               use_zombienet=False, use_gridnet=False)
     target_network = deepcopy(network)
     buffer = ReplayBuffer(memory_size=buffer_size, burn_in=burn_in)
+
+    # Estimate equivalent episodes for epsilon decay (avg ~200 steps per episode)
+    est_episodes = max(2, total_steps // 200)
     threshold = Threshold(
-        seq_length=max_episodes,
+        seq_length=est_episodes,
         start_epsilon=1.0,
         interpolation="exponential",
         end_epsilon=0.05,
@@ -53,7 +54,7 @@ def train_sim(
         device=device,
         network_type=network_type,
         network_params=sum(p.numel() for p in network.parameters()),
-        max_episodes=max_episodes,
+        total_steps=total_steps,
         buffer_size=buffer_size,
         burn_in=burn_in,
         batch_size=batch_size,
@@ -95,17 +96,18 @@ def train_sim(
         if done:
             s_0 = transform_observation(env.reset())
         step_count += 1
-    print(f"Burn-in done. Buffer: {len(buffer.replay_memory)}")
+    print(f"Burn-in done. Buffer: {len(buffer.replay_memory)}  "
+          f"(steps so far: {step_count})")
 
     # ── Training loop ──
     ep = 0
     s_0 = transform_observation(env.reset())
-    print(f"Training {max_episodes} episodes...")
+    print(f"Training up to {total_steps:,} steps...")
 
-    while ep < max_episodes:
+    while step_count < total_steps:
         rewards = 0
         done = False
-        while not done:
+        while not done and step_count < total_steps:
             epsilon = threshold.epsilon(ep)
             mask = np.array(env.mask_available_actions())
             action = network.decide_action(s_0, mask, epsilon=epsilon)
@@ -136,18 +138,19 @@ def train_sim(
                 update_loss = []
 
                 if ep % 100 == 0:
-                    gc.collect()  # force GC periodically to avoid memory creep
+                    gc.collect()
                     mean_r = np.mean(training_rewards[-window:])
                     mean_i = np.mean(training_iterations[-window:])
                     mean_l = np.mean(training_loss[-window:]) if training_loss else 0
-                    print(f"Episode {ep:5d} Mean Rewards {mean_r:8.2f}\t\t "
-                          f"Mean Iterations {mean_i:.2f}\t Mean Loss {mean_l:.2f}")
+                    print(f"Steps {step_count:7d}  Ep {ep:5d}  "
+                          f"Mean R {mean_r:8.2f}  Mean I {mean_i:.2f}  Mean L {mean_l:.2f}")
 
-                if ep >= max_episodes:
-                    print("\nEpisode limit reached.")
+                if step_count >= total_steps:
                     break
 
                 s_0 = transform_observation(env.reset())
+
+    print(f"\nStep limit reached ({total_steps:,} steps, {ep} episodes).")
 
     # ── Save ──
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -172,7 +175,7 @@ def _print_config(**cfg):
     print(f"{sep}")
     print(f"  {'Device:':24s} {cfg['device'].upper()}")
     print(f"  {'Network:':24s} {cfg['network_type']} ({cfg['network_params']:,} params)")
-    print(f"  {'Max episodes:':24s} {cfg['max_episodes']}")
+    print(f"  {'Total steps:':24s} {cfg['total_steps']:,}")
     print(f"  {'Buffer size:':24s} {cfg['buffer_size']}")
     print(f"  {'Burn-in steps:':24s} {cfg['burn_in']}")
     print(f"  {'Batch size:':24s} {cfg['batch_size']}")

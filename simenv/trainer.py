@@ -16,7 +16,7 @@ from models.ddqn.threshold import Threshold
 
 
 def train_sim(
-    total_steps=1_000_000,
+    max_episodes=100000,
     buffer_size=100000,
     burn_in=10000,
     batch_size=200,
@@ -39,10 +39,8 @@ def train_sim(
                               use_zombienet=False, use_gridnet=False)
     target_network = deepcopy(network)
     buffer = ReplayBuffer(memory_size=buffer_size, burn_in=burn_in)
-
-    # Epsilon decays over total_steps (step-based, not episode-based)
     threshold = Threshold(
-        seq_length=total_steps,
+        seq_length=max_episodes,
         start_epsilon=1.0,
         interpolation="exponential",
         end_epsilon=0.05,
@@ -53,7 +51,7 @@ def train_sim(
         device=device,
         network_type=network_type,
         network_params=sum(p.numel() for p in network.parameters()),
-        total_steps=total_steps,
+        max_episodes=max_episodes,
         buffer_size=buffer_size,
         burn_in=burn_in,
         batch_size=batch_size,
@@ -101,13 +99,13 @@ def train_sim(
     # ── Training loop ──
     ep = 0
     s_0 = transform_observation(env.reset())
-    print(f"Training up to {total_steps:,} steps...")
+    print(f"Training {max_episodes} episodes...")
 
-    while step_count < total_steps:
+    while ep < max_episodes:
         rewards = 0
         done = False
-        while not done and step_count < total_steps:
-            epsilon = threshold.epsilon(step_count)
+        while not done:
+            epsilon = threshold.epsilon(ep)
             mask = np.array(env.mask_available_actions())
             action = network.decide_action(s_0, mask, epsilon=epsilon)
             s_1, r, done, _ = env.step(action)
@@ -141,15 +139,15 @@ def train_sim(
                     mean_r = np.mean(training_rewards[-window:])
                     mean_i = np.mean(training_iterations[-window:])
                     mean_l = np.mean(training_loss[-window:]) if training_loss else 0
-                    print(f"Steps {step_count:7d}  Ep {ep:5d}  "
+                    print(f"Episode {ep:5d}/{max_episodes}  "
+                          f"Steps {step_count:7d}  "
                           f"Mean R {mean_r:8.2f}  Mean I {mean_i:.2f}  Mean L {mean_l:.2f}")
 
-                if step_count >= total_steps:
+                if ep >= max_episodes:
+                    print(f"\nEpisode limit reached ({max_episodes} episodes, {step_count} steps).")
                     break
 
                 s_0 = transform_observation(env.reset())
-
-    print(f"\nStep limit reached ({total_steps:,} steps, {ep} episodes).")
 
     # ── Save ──
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -174,7 +172,7 @@ def _print_config(**cfg):
     print(f"{sep}")
     print(f"  {'Device:':24s} {cfg['device'].upper()}")
     print(f"  {'Network:':24s} {cfg['network_type']} ({cfg['network_params']:,} params)")
-    print(f"  {'Total steps:':24s} {cfg['total_steps']:,}")
+    print(f"  {'Max episodes:':24s} {cfg['max_episodes']}")
     print(f"  {'Buffer size:':24s} {cfg['buffer_size']}")
     print(f"  {'Burn-in steps:':24s} {cfg['burn_in']}")
     print(f"  {'Batch size:':24s} {cfg['batch_size']}")

@@ -234,7 +234,7 @@ class PPORolloutBuffer:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def train_ppo(
-    total_steps=1_000_000,
+    max_episodes=100000,
     horizon=2048,
     batch_size=64,
     n_epochs=10,
@@ -253,8 +253,8 @@ def train_ppo(
 
     Parameters
     ----------
-    total_steps : int
-        Total environment steps to train for.
+    max_episodes : int
+        Total episodes to train for.
     horizon : int
         Steps collected per rollout before each PPO update.
     batch_size : int
@@ -292,19 +292,18 @@ def train_ppo(
     mse_loss = nn.MSELoss()
 
     state = transform_observation(env.reset())
+    ep = 0
     total_steps_done = 0
     episode_rewards = []
     episode_reward = 0.0
     update_count = 0
 
-    while total_steps_done < total_steps:
-        # ═══════════════════════════════════════════════════════════════
+    while ep < max_episodes:
         # Phase 1: Rollout — collect on-policy trajectories
-        # ═══════════════════════════════════════════════════════════════
         buffer.reset()
         episode_reward = 0.0
 
-        while not buffer.is_full() and total_steps_done < total_steps:
+        while not buffer.is_full() and ep < max_episodes:
             mask = env.mask_available_actions()
             action, log_prob, value = network.get_action(state, mask)
             next_state, reward, done, _ = env.step(action)
@@ -316,6 +315,7 @@ def train_ppo(
 
             state = next_state
             if done:
+                ep += 1
                 state = transform_observation(env.reset())
                 episode_rewards.append(episode_reward)
                 episode_reward = 0.0
@@ -421,15 +421,15 @@ def train_ppo(
         # ═══════════════════════════════════════════════════════════════
         # Logging
         # ═══════════════════════════════════════════════════════════════
-        if update_count % 5 == 0 or total_steps_done >= total_steps:
+        if update_count % 5 == 0 or ep >= max_episodes:
             gc.collect()
             recent = episode_rewards[-10:] if len(episode_rewards) >= 10 else episode_rewards
             mean_r = np.mean(recent) if recent else 0.0
-            print(f"Steps {total_steps_done:7d}  "
-                  f"Episodes {len(episode_rewards):4d}  "
-                  f"Mean Reward {mean_r:8.2f}  "
-                  f"Policy Loss {policy_loss.item():.4f}  "
-                  f"Value Loss {value_loss.item():.4f}  "
+            print(f"Ep {ep:5d}/{max_episodes}  "
+                  f"Steps {total_steps_done:7d}  "
+                  f"Mean R {mean_r:8.2f}  "
+                  f"Policy L {policy_loss.item():.4f}  "
+                  f"Value L {value_loss.item():.4f}  "
                   f"Entropy {entropy.mean().item():.4f}")
 
     # ═══════════════════════════════════════════════════════════════════
@@ -508,7 +508,7 @@ def _print_ppo_config(loc):
     print(f"{sep}")
     print(f"  {'Device:':28s} {loc['device'].upper()}")
     print(f"  {'Network:':28s} {loc['network_type']} ({loc['n_params']:,} params)")
-    print(f"  {'Total steps:':28s} {loc['total_steps']:,}")
+    print(f"  {'Max episodes:':28s} {loc['max_episodes']}")
     print(f"  {'Horizon:':28s} {loc['horizon']}")
     print(f"  {'Batch size:':28s} {loc['batch_size']}")
     print(f"  {'Epochs per update:':28s} {loc['n_epochs']}")

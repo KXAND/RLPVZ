@@ -27,7 +27,7 @@ if __name__ == "__main__":
     if algo == "ppo":
         from simenv.ppo import train_ppo
         train_ppo(
-            total_steps=1000000,
+            max_episodes=100000,
             horizon=2048,
             batch_size=64,
             n_epochs=10,
@@ -36,7 +36,7 @@ if __name__ == "__main__":
     else:
         from simenv.trainer import train_sim
         train_sim(
-            total_steps=2000000,
+            max_episodes=100000,
             buffer_size=50000,
             burn_in=10000,
             batch_size=200,

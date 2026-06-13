@@ -146,7 +146,9 @@ class AsyncDDQNTrainer:
                 continue
 
             episode_stats = self.stats.record_episode(
-                message["reward"], message["iterations"]
+                message["reward"],
+                message["iterations"],
+                bool(message.get("win") is True),
             )
             self.metric_emitter.emit_episode(
                 message, episode_stats, self.transition_count

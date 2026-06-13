@@ -19,6 +19,7 @@ class AsyncDDQNTrainer:
         network,
         metrics=None,
         checkpoint=None,
+        context=None,
         env_spec=None,
         scenario_spec=None,
     ):
@@ -44,6 +45,9 @@ class AsyncDDQNTrainer:
         self.metric_emitter = DDQNMetricEmitter(metrics)
         self.reporter = DDQNConsoleReporter()
         self.checkpoint = checkpoint
+        if context is None and getattr(args, "curriculum", "none") != "none":
+            raise ValueError("DDQN curriculum training requires TrainContext")
+        self.context = context
         self.env_spec = env_spec
         self.scenario_spec = scenario_spec
 
@@ -147,6 +151,7 @@ class AsyncDDQNTrainer:
             self.metric_emitter.emit_episode(
                 message, episode_stats, self.transition_count
             )
+            self._update_curriculum(worker_pool, message, episode_stats)
 
             if (
                 self.checkpoint is not None
@@ -175,3 +180,19 @@ class AsyncDDQNTrainer:
 
     def _emit_training_metrics(self, force=False):
         self.metric_emitter.emit_snapshot(self.stats.to_snapshot(force=force))
+
+    def _update_curriculum(self, worker_pool, message, episode_stats):
+        if self.context is None:
+            return
+        changed, scenario = self.context.update_curriculum(
+            {
+                "episode_reward": float(message["reward"]),
+                "episode_success": bool(message.get("win") is True),
+                "episode_count": episode_stats.episode,
+                "step": self.transition_count,
+            }
+        )
+        if changed:
+            worker_pool.publish_scenario(scenario)
+        else:
+            worker_pool.acknowledge_episode(int(message["worker_id"]))

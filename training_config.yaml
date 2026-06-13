@@ -192,11 +192,46 @@ rewards:
     delta_scale: 0.6
 
 # =============================================================================
+# 课程学习配置
+# =============================================================================
+# training.args.curriculum 默认使用 "stage_gate"。
+# 直接运行: .\.venv\Scripts\python.exe train.py
+curriculum:
+  stage_gate:
+    # mean_* 阈值统计的 episode 窗口长度；窗口不足时按已有 episode 计算。
+    metric_window: 5
+    stages:
+      # 达到 min_episodes && mean_reward_threshold && mean_success_rate_threshold 后升阶。
+      - stage_name: "warmup_day_rows"
+        game_mode_id: 11
+        level: null
+        rows: 5
+        cols: 9
+        enabled_rows: [0, 1, 2, 3, 4]
+        enabled_plants: [1, 0, 2]
+        initial_sun: 200
+        # 当前阶段至少完成的 episode 数。
+        min_episodes: 2
+        # 最近 metric_window 个 episode reward 的平均值阈值。
+        mean_reward_threshold: 100.0
+        # 最近 metric_window 个 episode 胜率平均值；小数比例，取值范围 0.0-1.0。
+        mean_success_rate_threshold: 0.0
+
+      - stage_name: "full_pool"
+        game_mode_id: 13
+        level: null
+        rows: 6
+        cols: 9
+        enabled_rows: [0, 1, 2, 3, 4, 5]
+        enabled_plants: [1, 0, 7, 16, 3, 17, 2, 43, 18, 39]
+        initial_sun: 50
+
+# =============================================================================
 # 训练配置
 # =============================================================================
 training:
   args:
-    algo: "ddqn"                # 默认算法: ppo 或 ddqn
+    algo: "ppo"                # 默认算法: ppo 或 ddqn
     port: 12345
     num_envs: 1
     base_port: 12345
@@ -211,7 +246,7 @@ training:
     env_console_log_level: 0
     file_log_level: 1
     execution: "auto"
-    curriculum: "none"
+    curriculum: "stage_gate"
   
   ppo:
     timesteps: 500000

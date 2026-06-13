@@ -19,6 +19,8 @@ from pvz_interface import PVZInterface, InterfaceMode
 from data.plants import PlantType, PLANT_COST
 from data.zombies import ZombieType, ZOMBIE_BASE_SPEED
 from data.projectiles import ProjectileType, PROJECTILE_DAMAGE
+from data.game_modes import POOL_GAME_MODE_IDS, POOL_WATER_ROWS
+from training.specs import EnvSpec, ScenarioSpec, validate_scenario_spec
 import subprocess
 import psutil
 
@@ -99,6 +101,8 @@ class PVZEnv(gym.Env):
         target_pid: Optional[int] = None,  # 绑定到指定 PVZ 进程
         verbose: int = 1,  # 日志级别: 0=静默, 1=关键信息, 2=详细调试
         log_verbose: int = 1,  # 文件日志级别: 0=静默, 1=关键信息, 2=详细调试
+        env_spec: Optional[EnvSpec] = None,
+        scenario_spec: Optional[ScenarioSpec] = None,
     ):
         """
         初始化环境
@@ -125,24 +129,56 @@ class PVZEnv(gym.Env):
         
         # 加载配置
         self._load_config(config_path)
+        self.env_spec = env_spec
         
         # 游戏接口
         self.hook_client: Optional[HookClient] = None
         self.pvz: Optional[PVZInterface] = None
         
         # 游戏参数
-        self.rows = self.config['game']['rows']
-        self.cols = self.config['game']['cols']
-        self.num_cards = self.config['cards']['slot_count']
-        self.game_mode = self.config['game']['game_mode_id']  # 11
+        config_rows = int(self.config['game']['rows'])
+        config_cols = int(self.config['game']['cols'])
+        self.rows = int(env_spec.rows) if env_spec is not None else config_rows
+        self.cols = int(env_spec.cols) if env_spec is not None else config_cols
+        self.num_cards = (
+            int(env_spec.plant_types)
+            if env_spec is not None
+            else int(self.config['cards']['slot_count'])
+        )
+        # 当前实际运行的场景值；课程阶段会通过 ScenarioSpec 覆盖。
+        self.game_mode = int(self.config['game']['game_mode_id'])
         self.initial_sun = self.config['game'].get('initial_sun')
         if self.initial_sun is None:
             self.initial_sun = 50  # 默认50
+        else:
+            self.initial_sun = int(self.initial_sun)
         # 无尽模式不设置目标波数，从游戏状态获取
-        
+
         # 卡片信息
-        self.card_plant_ids = [p['id'] for p in self.config['cards']['plants']]
-        self.card_costs = [p['cost'] for p in self.config['cards']['plants']]
+        self.card_plant_ids = [int(p['id']) for p in self.config['cards']['plants']]
+        self.card_costs = [int(p['cost']) for p in self.config['cards']['plants']]
+        if len(self.card_plant_ids) != self.num_cards:
+            raise ValueError(
+                "cards.plants 数量必须与固定卡槽数量一致，避免动作索引语义变化"
+            )
+        self.current_scenario: ScenarioSpec | None = None
+        level = self.config['game'].get('level')
+        fallback_scenario = ScenarioSpec(
+            game_mode_id=self.game_mode,
+            level=None if level is None else int(level),
+            rows=config_rows,
+            cols=config_cols,
+            cards=tuple(self.card_plant_ids),
+            enabled_rows=tuple(range(config_rows)),
+            enabled_plants=tuple(self.card_plant_ids),
+            initial_sun=self.initial_sun,
+        )
+        self._pending_scenario: ScenarioSpec | None = scenario_spec or fallback_scenario
+        self.scenario_rows = config_rows
+        self.scenario_cols = config_cols
+        self.enabled_rows = set(range(config_rows))
+        self.enabled_plants = set(self.card_plant_ids)
+        self._apply_pending_scenario()
         
         # 动作空间: 种植动作 + 可选铲子动作 + 等待
         action_structure = self.config.get('action_space', {}).get('structure', {})
@@ -165,9 +201,14 @@ class PVZEnv(gym.Env):
         
         # 观测空间 (增强版)
         obs_config = self.config.get('observation_space', {})
-        grid_shape = obs_config.get('grid', {}).get('shape', [self.rows, self.cols, 13])
-        global_dim = obs_config.get('global', {}).get('total_dim', 71)  # 增加新特征
-        card_attr_shape = obs_config.get('card_attributes', {}).get('shape', [self.num_cards, 7])  # 增加子弹类型
+        if env_spec is not None:
+            grid_shape = [env_spec.rows, env_spec.cols, env_spec.grid_channels]
+            global_dim = env_spec.global_feature_dim
+            card_attr_shape = list(env_spec.card_attribute_shape)
+        else:
+            grid_shape = obs_config.get('grid', {}).get('shape', [self.rows, self.cols, 13])
+            global_dim = obs_config.get('global', {}).get('total_dim', 71)  # 增加新特征
+            card_attr_shape = obs_config.get('card_attributes', {}).get('shape', [self.num_cards, 7])  # 增加子弹类型
         
         self.observation_space = spaces.Dict({
             # 网格特征: 行×列×通道 (增强)
@@ -282,6 +323,69 @@ class PVZEnv(gym.Env):
         """加载配置文件"""
         with open(config_path, 'r', encoding='utf-8') as f:
             self.config = yaml.safe_load(f)
+
+    def set_pending_scenario(self, scenario_spec: ScenarioSpec) -> None:
+        # 只记录下一次 reset 要提交的场景，不改变 action/observation 空间。
+        validate_scenario_spec(
+            scenario_spec,
+            expected_cards=tuple(self.card_plant_ids),
+            max_rows=self.rows,
+            max_cols=self.cols,
+        )
+        self._pending_scenario = scenario_spec
+
+    def _apply_pending_scenario(self) -> bool:
+        # pending scenario 在 reset 开始时统一提交，避免中途改变当前 episode。
+        if self._pending_scenario is None:
+            return False
+        scenario_spec = self._pending_scenario
+        validate_scenario_spec(
+            scenario_spec,
+            expected_cards=tuple(self.card_plant_ids),
+            max_rows=self.rows,
+            max_cols=self.cols,
+        )
+        self.current_scenario = scenario_spec
+        # 当前场景值用于 reset 启动关卡和水路/陆地判断。
+        self.game_mode = int(scenario_spec.game_mode_id)
+        self.initial_sun = (
+            50
+            if scenario_spec.initial_sun is None
+            else int(scenario_spec.initial_sun)
+        )
+        self.scenario_rows = int(scenario_spec.rows)
+        self.scenario_cols = int(scenario_spec.cols)
+        self.enabled_rows = set(int(row) for row in scenario_spec.enabled_rows)
+        self.enabled_plants = set(int(plant) for plant in scenario_spec.enabled_plants)
+        self._pending_scenario = None
+        return True
+
+    def _is_curriculum_cell_enabled(self, row: int, col: int) -> bool:
+        return (
+            0 <= row < self.scenario_rows
+            and 0 <= col < self.scenario_cols
+            and row in self.enabled_rows
+        )
+
+    def _is_curriculum_row_enabled(self, row: int) -> bool:
+        return 0 <= row < self.scenario_rows and row in self.enabled_rows
+
+    def _is_curriculum_card_enabled(self, card_idx: int) -> bool:
+        if card_idx < 0 or card_idx >= len(self.card_plant_ids):
+            return False
+        return self.card_plant_ids[card_idx] in self.enabled_plants
+
+    def _is_water_row(self, row: int) -> bool:
+        # 地形来自当前课程场景的 game_mode_id，不能用 run-level rows 推断。
+        return int(self.game_mode) in POOL_GAME_MODE_IDS and row in POOL_WATER_ROWS
+
+    def _neutralize_inactive_cells(self, grid: np.ndarray) -> np.ndarray:
+        for row in range(min(self.rows, grid.shape[0])):
+            if not self._is_curriculum_row_enabled(row):
+                grid[row, :, :] = 0.0
+        if self.scenario_cols < grid.shape[1]:
+            grid[:, self.scenario_cols :, :] = 0.0
+        return grid
 
     def _is_pvz_running(self) -> bool:
         """检查 PVZ 进程是否在运行"""
@@ -470,6 +574,7 @@ class PVZEnv(gym.Env):
 
     def _start_from_main_menu_or_raise(self) -> int:
         """从主菜单进入游戏；若快捷流程失败，则走手动兜底流程。"""
+        # reset 已提交当前场景，这里使用场景的 game_mode_id 启动关卡。
         if self.hook_client.auto_start_game(
             mode=self.game_mode,
             cards=self.card_plant_ids,
@@ -497,6 +602,7 @@ class PVZEnv(gym.Env):
             info: 额外信息
         """
         super().reset(seed=seed)
+        scenario_changed = self._apply_pending_scenario()
         
         # 连接游戏
         if not self._connect():
@@ -550,6 +656,9 @@ class PVZEnv(gym.Env):
         if ui == 3:  # 游戏中
             ui = self._back_to_main_or_raise(timeout=2.0)
         
+        if ui == 2 and scenario_changed:
+            ui = self._back_to_main_or_raise(timeout=2.0)
+
         if ui == 2:  # 选卡界面
             ui = self._start_from_card_select_or_raise()
         
@@ -559,7 +668,7 @@ class PVZEnv(gym.Env):
         # 等待游戏开始
         self._require_ui(3, timeout=10.0, error_message="等待游戏开始超时")
         
-        # 设置初始阳光 (如果是教学模式)
+        # reset 时应用当前场景的初始阳光。
         if self.initial_sun != 50:
             # 等待一小会儿确保内存结构已初始化
             time.sleep(0.5)
@@ -1176,6 +1285,12 @@ class PVZEnv(gym.Env):
         
         if card_idx < 0 or card_idx >= len(self.card_costs):
             return False
+
+        # 与 action mask 共用课程限制，避免绕过禁用行列或植物。
+        if not self._is_curriculum_card_enabled(card_idx):
+            return False
+        if not self._is_curriculum_cell_enabled(row, col):
+            return False
         
         # 检查阳光
         cost = self.card_costs[card_idx]
@@ -1231,7 +1346,7 @@ class PVZEnv(gym.Env):
 
         # === 2. 地形与水生检查 ===
         # 泳池模式下，行 2 和 3 是水路 (0-indexed)
-        is_water_row = (self.rows == 6 and (row == 2 or row == 3))
+        is_water_row = self._is_water_row(row)
         is_aquatic_card = (card_plant_id in AQUATIC_PLANTS)
         
         if is_water_row:
@@ -1396,11 +1511,16 @@ class PVZEnv(gym.Env):
         
         # 从配置获取维度
         obs_config = self.config.get('observation_space', {})
-        grid_shape = obs_config.get('grid', {}).get('shape', [self.rows, self.cols, 13])
-        global_dim = obs_config.get('global', {}).get('total_dim', 71)  # 增加新特征
-        card_attr_shape = tuple(
-            obs_config.get('card_attributes', {}).get('shape', [self.num_cards, 7])
-        )
+        if self.env_spec is not None:
+            grid_shape = [self.env_spec.rows, self.env_spec.cols, self.env_spec.grid_channels]
+            global_dim = self.env_spec.global_feature_dim
+            card_attr_shape = tuple(self.env_spec.card_attribute_shape)
+        else:
+            grid_shape = obs_config.get('grid', {}).get('shape', [self.rows, self.cols, 13])
+            global_dim = obs_config.get('global', {}).get('total_dim', 71)  # 增加新特征
+            card_attr_shape = tuple(
+                obs_config.get('card_attributes', {}).get('shape', [self.num_cards, 7])
+            )
         
         # 网格特征
         grid = np.zeros(tuple(grid_shape), dtype=np.float32)
@@ -1465,7 +1585,10 @@ class PVZEnv(gym.Env):
         数据利用率：96%
         """
         obs_config = self.config.get('observation_space', {})
-        grid_shape = obs_config.get('grid', {}).get('shape', [self.rows, self.cols, 13])
+        if self.env_spec is not None:
+            grid_shape = [self.env_spec.rows, self.env_spec.cols, self.env_spec.grid_channels]
+        else:
+            grid_shape = obs_config.get('grid', {}).get('shape', [self.rows, self.cols, 13])
         grid = np.zeros(tuple(grid_shape), dtype=np.float32)
         n_channels = grid_shape[2]
         
@@ -1694,7 +1817,7 @@ class PVZEnv(gym.Env):
             max_kills = np.max(self.kill_heatmap) if np.max(self.kill_heatmap) > 0 else 1.0
             grid[:, :, 12] = self.kill_heatmap / max_kills
         
-        return grid
+        return self._neutralize_inactive_cells(grid)
     
     def _get_zombie_threat(self, zombie_type: int) -> float:
         """获取僵尸类型威胁度 (完整版)"""
@@ -1732,8 +1855,20 @@ class PVZEnv(gym.Env):
     def _build_global_features(self, game_state) -> np.ndarray:
         """构建增强全局特征 (71维)"""
         obs_config = self.config.get('observation_space', {})
-        global_dim = obs_config.get('global', {}).get('total_dim', 71)
+        global_dim = (
+            self.env_spec.global_feature_dim
+            if self.env_spec is not None
+            else obs_config.get('global', {}).get('total_dim', 71)
+        )
         features = np.zeros(global_dim, dtype=np.float32)
+        active_plants = [
+            plant for plant in game_state.plants
+            if self._is_curriculum_cell_enabled(plant.row, plant.col)
+        ]
+        active_zombies = [
+            zombie for zombie in game_state.zombies
+            if self._is_curriculum_row_enabled(zombie.row)
+        ]
         
         idx = 0
         
@@ -1742,7 +1877,7 @@ class PVZEnv(gym.Env):
         idx += 1
         
         # 2. 向日葵数量 (归一化，假设最多20)
-        sunflower_count = sum(1 for p in game_state.plants if p.type == PlantType.SUNFLOWER)
+        sunflower_count = sum(1 for p in active_plants if p.type == PlantType.SUNFLOWER)
         features[idx] = min(1.0, sunflower_count / 20.0)
         idx += 1
         
@@ -1765,22 +1900,25 @@ class PVZEnv(gym.Env):
         idx += 1
         
         # 7. 僵尸总数 (归一化)
-        features[idx] = min(1.0, len(game_state.zombies) / 100.0)
+        features[idx] = min(1.0, len(active_zombies) / 100.0)
         idx += 1
         
         # 8. 僵尸总血量 (归一化)
-        total_zombie_hp = sum(z.total_hp for z in game_state.zombies)
+        total_zombie_hp = sum(z.total_hp for z in active_zombies)
         features[idx] = min(1.0, total_zombie_hp / 50000.0)  # 假设最大50000
         idx += 1
         
         # 9. 植物总数 (归一化)
-        features[idx] = min(1.0, len(game_state.plants) / max(1, self.rows * self.cols))
+        features[idx] = min(1.0, len(active_plants) / max(1, self.rows * self.cols))
         idx += 1
         
         # 10. 小推车状态 (5维，每行一个)
         if hasattr(game_state, 'lawnmowers'):
             for row in range(self.rows):
-                has_mower = any(lm.row == row and not lm.is_dead for lm in game_state.lawnmowers)
+                has_mower = (
+                    self._is_curriculum_row_enabled(row)
+                    and any(lm.row == row and not lm.is_dead for lm in game_state.lawnmowers)
+                )
                 if idx < global_dim:
                     features[idx] = 1.0 if has_mower else 0.0
                     idx += 1
@@ -1807,7 +1945,7 @@ class PVZEnv(gym.Env):
         
         # 13. 每行威胁度 (5维)
         row_threats = [0.0] * self.rows
-        for zombie in game_state.zombies:
+        for zombie in active_zombies:
             if 0 <= zombie.row < self.rows:
                 # 威胁度 = 血量 × 类型系数 × 距离系数
                 threat = zombie.total_hp / 1000.0  # 血量归一化
@@ -1821,7 +1959,7 @@ class PVZEnv(gym.Env):
         
         # 14. 每行防御力 (5维)
         row_defense = [0.0] * self.rows
-        for plant in game_state.plants:
+        for plant in active_plants:
             if 0 <= plant.row < self.rows:
                 # 根据植物类型给防御值
                 if plant.type == 3:  # 坚果墙
@@ -1850,7 +1988,10 @@ class PVZEnv(gym.Env):
         # 17. 冰道状态 (5维，每行一个)
         if hasattr(game_state, 'ice_trails'):
             for row in range(self.rows):
-                has_ice = any(trail.get('row') == row and trail.get('timer', 0) > 0 for trail in game_state.ice_trails)
+                has_ice = (
+                    self._is_curriculum_row_enabled(row)
+                    and any(trail.get('row') == row and trail.get('timer', 0) > 0 for trail in game_state.ice_trails)
+                )
                 if idx < global_dim:
                     features[idx] = 1.0 if has_ice else 0.0
                     idx += 1
@@ -1910,6 +2051,8 @@ class PVZEnv(gym.Env):
             
             # 获取当前卡片的植物ID
             card_plant_id = self.card_plant_ids[card_idx] if hasattr(self, 'card_plant_ids') else -1
+            if not self._is_curriculum_card_enabled(card_idx):
+                continue
             is_pumpkin_card = (card_plant_id == 30)
             is_aquatic_card = (card_plant_id in AQUATIC_PLANTS)
             is_upgrade_card = (card_plant_id in UPGRADE_PLANTS)
@@ -1917,6 +2060,9 @@ class PVZEnv(gym.Env):
             for row in range(self.rows):
                 for col in range(self.cols):
                     action_idx = card_idx * (self.rows * self.cols) + row * self.cols + col
+                    # 课程限制只屏蔽动作，不改变固定 action space 大小。
+                    if not self._is_curriculum_cell_enabled(row, col):
+                        continue
                     
                     plants_on_cell = cell_plants.get((row, col), [])
                     is_empty = len(plants_on_cell) == 0
@@ -1942,7 +2088,7 @@ class PVZEnv(gym.Env):
                         # 上面的 base_id in plants_on_cell 已经涵盖了
                     
                     # === 2. 地形与水生检查 ===
-                    elif self.rows == 6 and (row == 2 or row == 3): # 泳池行
+                    elif self._is_water_row(row): # 泳池行
                         if is_aquatic_card:
                             # 水生植物 (睡莲/海草)
                             if card_plant_id == 16: # 睡莲

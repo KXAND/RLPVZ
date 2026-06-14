@@ -207,6 +207,21 @@ curriculum:
         level: null
         rows: 5
         cols: 9
+        enabled_rows: [0, 1, 2]
+        enabled_plants: [1, 0, 2]
+        initial_sun: 200
+        # 当前阶段至少完成的 episode 数。
+        min_episodes: 3
+        # 最近 metric_window 个 episode reward 的平均值阈值。
+        mean_reward_threshold: 100.0
+        # 最近 metric_window 个 episode 胜率平均值；小数比例，取值范围 0.0-1.0。
+        mean_success_rate_threshold: 1.0
+      
+      - stage_name: "warmup_day_full_rows"
+        game_mode_id: 11
+        level: null
+        rows: 5
+        cols: 9
         enabled_rows: [0, 1, 2, 3, 4]
         enabled_plants: [1, 0, 2]
         initial_sun: 200

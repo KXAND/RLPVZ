@@ -74,6 +74,9 @@ _ZOMBIE_THREAT_PRIORITY = {
     ZombieType.DIGGER: 1.4,
 }
 
+_INACTIVE_ROW_CLEAR_INTERVAL_CS = 100
+_INACTIVE_ROW_CLEAR_COL = 0
+
 
 class PVZEnv(gym.Env):
     """
@@ -357,6 +360,7 @@ class PVZEnv(gym.Env):
         self.scenario_cols = int(scenario_spec.cols)
         self.enabled_rows = set(int(row) for row in scenario_spec.enabled_rows)
         self.enabled_plants = set(int(plant) for plant in scenario_spec.enabled_plants)
+        self._last_inactive_row_clear_clock = None
         self._pending_scenario = None
         return True
 
@@ -380,12 +384,50 @@ class PVZEnv(gym.Env):
         return int(self.game_mode) in POOL_GAME_MODE_IDS and row in POOL_WATER_ROWS
 
     def _neutralize_inactive_cells(self, grid: np.ndarray) -> np.ndarray:
+        """把课程未启用行和场景外列的 grid observation 置零。"""
         for row in range(min(self.rows, grid.shape[0])):
             if not self._is_curriculum_row_enabled(row):
                 grid[row, :, :] = 0.0
         if self.scenario_cols < grid.shape[1]:
             grid[:, self.scenario_cols :, :] = 0.0
         return grid
+
+    def _clear_inactive_rows(self, game_state) -> None:
+        """在课程未启用行定期放置火爆辣椒，清理无效区域僵尸。"""
+        if game_state is None or self.hook_client is None or not self.hook_client.connected:
+            return
+
+        game_clock = getattr(game_state, 'game_clock', None)
+        if game_clock is None:
+            return
+        game_clock = int(game_clock)
+
+        last_clear_clock = self._last_inactive_row_clear_clock
+        if (
+            last_clear_clock is not None
+            and game_clock >= last_clear_clock
+            and game_clock - last_clear_clock < _INACTIVE_ROW_CLEAR_INTERVAL_CS
+        ):
+            return
+
+        inactive_rows = sorted({
+            int(zombie.row)
+            for zombie in game_state.zombies
+            if (
+                0 <= int(zombie.row) < self.scenario_rows
+                and not self._is_curriculum_row_enabled(int(zombie.row))
+            )
+        })
+        if not inactive_rows:
+            return
+
+        self._last_inactive_row_clear_clock = game_clock
+        for row in inactive_rows:
+            self.hook_client.plant(
+                row,
+                _INACTIVE_ROW_CLEAR_COL,
+                int(PlantType.JALAPENO),
+            )
 
     def _is_pvz_running(self) -> bool:
         """检查 PVZ 进程是否在运行"""
@@ -703,6 +745,7 @@ class PVZEnv(gym.Env):
         self._episode_win = None  # 重置胜负状态
         self._victory_printed = False  # 重置胜利打印标记
         self._no_zombie_steps = 0  # 重置无僵尸计数
+        self._last_inactive_row_clear_clock = None
         
         # 重置热力图
         if hasattr(self, 'kill_heatmap'):
@@ -715,12 +758,20 @@ class PVZEnv(gym.Env):
         game_state = self.pvz.get_game_state()
         self._cached_game_state = game_state  # 缓存供第一步使用
         if game_state:
+            active_plants = [
+                plant for plant in game_state.plants
+                if self._is_curriculum_cell_enabled(plant.row, plant.col)
+            ]
+            active_zombies = [
+                zombie for zombie in game_state.zombies
+                if self._is_curriculum_row_enabled(zombie.row)
+            ]
             self.last_sun = game_state.sun
-            self.last_zombie_count = len(game_state.zombies)
-            self.last_zombies_state = list(game_state.zombies)  # 保存僵尸列表副本用于追踪击杀位置
-            self.last_plant_count = len(game_state.plants)
+            self.last_zombie_count = len(active_zombies)
+            self.last_zombies_state = list(active_zombies)  # 保存启用行僵尸用于追踪有效击杀
+            self.last_plant_count = len(active_plants)
             self.last_wave = game_state.wave
-            self.sunflower_count = sum(1 for p in game_state.plants if p.type == PlantType.SUNFLOWER)
+            self.sunflower_count = sum(1 for p in active_plants if p.type == PlantType.SUNFLOWER)
             # 初始化小推车状态
             for lm in game_state.lawnmowers:
                 if 0 <= lm.row < self.rows:
@@ -861,7 +912,9 @@ class PVZEnv(gym.Env):
                     console_level=2,
                     log_level=2,
                 )
-            
+
+            self._clear_inactive_rows(game_state)
+
             # 计算奖励
             r_compute, compute_details, potential = self._compute_reward_debug(game_state)
             reward += r_compute
@@ -940,7 +993,7 @@ class PVZEnv(gym.Env):
     def _calculate_potential(self, game_state) -> float:
         """
         计算势能函数 (Potential Function)，用于奖励塑形
-        利用阳光、植物布局、小推车、波数和僵尸威胁构建更平滑的潜势。
+        只使用课程启用区域的植物、僵尸和小推车，避免无效区域影响奖励。
         """
         if game_state is None:
             return 0.0
@@ -956,13 +1009,22 @@ class PVZEnv(gym.Env):
         wave_scale = cfg.get('wave_scale', 0.25)
 
         sun_potential = sun_scale * (game_state.sun / (game_state.sun + sun_cap))
+        active_plants = [
+            plant for plant in game_state.plants
+            if self._is_curriculum_cell_enabled(plant.row, plant.col)
+        ]
+        active_zombies = [
+            zombie for zombie in game_state.zombies
+            if self._is_curriculum_row_enabled(zombie.row)
+        ]
 
         plant_potential = 0.0
         column_coverage = set()
         row_counts = [0] * self.rows
-        max_col_index = max(1, self.cols - 1)
+        active_row_count = max(1, len(self.enabled_rows))
+        max_col_index = max(1, self.scenario_cols - 1)
 
-        for plant in game_state.plants:
+        for plant in active_plants:
             base_value = _PLANT_POTENTIAL_BASE.get(plant.type, 0.35)
             column_bias = 1.0 - (plant.col / max_col_index) if max_col_index > 0 else 0.5
             column_factor = 1.0 + 0.3 * column_bias
@@ -977,13 +1039,13 @@ class PVZEnv(gym.Env):
             if 0 <= plant.row < self.rows:
                 row_counts[plant.row] += 1
 
-        coverage_score = sum(min(1.0, count / 3.0) for count in row_counts) / max(1, self.rows)
+        coverage_score = sum(min(1.0, count / 3.0) for count in row_counts) / active_row_count
         coverage_bonus = coverage_score * spread_bonus
-        column_bonus = (len(column_coverage) / max(1, self.cols)) * spread_bonus
+        column_bonus = (len(column_coverage) / max(1, self.scenario_cols)) * spread_bonus
 
         lawnmowers_ready = 0
         for lm in getattr(game_state, 'lawnmowers', []):
-            if getattr(lm, 'state', 0) == 1:
+            if self._is_curriculum_row_enabled(lm.row) and getattr(lm, 'state', 0) == 1:
                 lawnmowers_ready += 1
 
         total_waves = getattr(game_state, 'total_waves', 0)
@@ -991,7 +1053,7 @@ class PVZEnv(gym.Env):
         wave_component = wave_progress * wave_scale
 
         zombie_threat = 0.0
-        for zombie in game_state.zombies:
+        for zombie in active_zombies:
             if getattr(zombie, 'hp', 0) <= 0:
                 continue
 
@@ -1018,9 +1080,17 @@ class PVZEnv(gym.Env):
         return potential
 
     def _compute_reward_debug(self, game_state) -> Tuple[float, Dict[str, float], float]:
-        """计算奖励并返回详情 (调试版)"""
+        """计算启用区域奖励并返回详情，禁用行实体不参与奖励差分。"""
         reward = 0.0
         details = {}
+        active_plants = [
+            plant for plant in game_state.plants
+            if self._is_curriculum_cell_enabled(plant.row, plant.col)
+        ]
+        active_zombies = [
+            zombie for zombie in game_state.zombies
+            if self._is_curriculum_row_enabled(zombie.row)
+        ]
         
         # 存活奖励
         r_survival = self.rewards.get('survival_per_step', 0.0)
@@ -1031,7 +1101,7 @@ class PVZEnv(gym.Env):
         # === 新增机制: 防线覆盖奖励 ===
         # 鼓励 AI 在每一行都部署"非经济类"植物，防止被单点突破
         covered_rows = set()
-        for plant in game_state.plants:
+        for plant in active_plants:
             # 排除向日葵(1)和阳光菇(4)，其他都算防守力量
             if plant.type not in [1, 4]: 
                 covered_rows.add(plant.row)
@@ -1045,7 +1115,7 @@ class PVZEnv(gym.Env):
         # === 新增机制: 僵尸逼近压力 ===
         # 如果有僵尸越过警戒线 (X < 200)，给予持续压力惩罚
         proximity_penalty = 0.0
-        for zombie in game_state.zombies:
+        for zombie in active_zombies:
             if zombie.x < 200:
                 # 距离越近惩罚越大，最大约 -0.005/step
                 proximity_penalty += ((200 - zombie.x) / 200.0) * 0.005
@@ -1062,7 +1132,7 @@ class PVZEnv(gym.Env):
             details['sun'] = r_sun
         
         # 僵尸击杀奖励与热力图更新
-        current_zombie_indices = {z.index for z in game_state.zombies}
+        current_zombie_indices = {z.index for z in active_zombies}
         killed_zombies = []
         
         # 确保 last_zombies_state 存在
@@ -1070,6 +1140,9 @@ class PVZEnv(gym.Env):
             self.last_zombies_state = []
 
         for old_z in self.last_zombies_state:
+            if not self._is_curriculum_row_enabled(old_z.row):
+                # 禁用行的环境清理不属于 agent 行为，不能产生击杀奖励。
+                continue
             if old_z.index not in current_zombie_indices:
                 # 僵尸消失了
                 # 排除到达终点的僵尸 (x < -30，通常进家是 -50 左右)
@@ -1080,7 +1153,7 @@ class PVZEnv(gym.Env):
                     # 找到最近的格子
                     r = int(old_z.row)
                     c = int((old_z.x - 10) / 80)  # 估算列
-                    if 0 <= r < 5 and 0 <= c < 9:
+                    if 0 <= r < self.rows and 0 <= c < self.cols:
                         self.kill_heatmap[r, c] += 1.0
         
         # 热力图衰减 (每步衰减，保持动态性)
@@ -1101,7 +1174,7 @@ class PVZEnv(gym.Env):
         
         # 小推车状态检测
         for lm in game_state.lawnmowers:
-            if 0 <= lm.row < self.rows:
+            if 0 <= lm.row < self.rows and self._is_curriculum_row_enabled(lm.row):
                 was_available = self.lawnmower_available[lm.row]
                 is_available = (lm.state == 1)
                 
@@ -1112,11 +1185,11 @@ class PVZEnv(gym.Env):
                     details['lawnmower'] = penalty
         
         # 种植奖励
-        plant_diff = len(game_state.plants) - self.last_plant_count
+        plant_diff = len(active_plants) - self.last_plant_count
         if plant_diff > 0:
             new_plant = None
-            if game_state.plants:
-                new_plant = game_state.plants[-1]
+            if active_plants:
+                new_plant = active_plants[-1]
             
             if new_plant:
                 base_reward = 0.0
@@ -1138,7 +1211,7 @@ class PVZEnv(gym.Env):
                     
                     # 检查同位置是否有其他植物 (被保护对象)
                     inner_plant = None
-                    for p in game_state.plants:
+                    for p in active_plants:
                         if p.row == new_plant.row and p.col == new_plant.col and p.type != 30:
                             inner_plant = p
                             break
@@ -1177,7 +1250,7 @@ class PVZEnv(gym.Env):
                 reward += 0.3
                 details['plant'] = 0.3
             
-            self.sunflower_count = sum(1 for p in game_state.plants if p.type == PlantType.SUNFLOWER)
+            self.sunflower_count = sum(1 for p in active_plants if p.type == PlantType.SUNFLOWER)
         
         # 植物损失惩罚 (降低惩罚强度,避免AI过度保守)
         elif plant_diff < 0:
@@ -1186,7 +1259,7 @@ class PVZEnv(gym.Env):
             self.plants_lost += abs(plant_diff)
             details['plant_lost'] = r_lost
             
-            current_sunflowers = sum(1 for p in game_state.plants if p.type == PlantType.SUNFLOWER)
+            current_sunflowers = sum(1 for p in active_plants if p.type == PlantType.SUNFLOWER)
             sunflower_lost = self.sunflower_count - current_sunflowers
             if sunflower_lost > 0:
                 r_sf_lost = sunflower_lost * self.rewards.get('sunflower_lost', -10.0)  # -30 -> -10
@@ -1494,11 +1567,19 @@ class PVZEnv(gym.Env):
         return False, False
     
     def _update_last_state(self, game_state, potential=None):
-        """更新上一帧状态"""
+        """按课程启用区域更新上一帧状态，避免无效行影响差分奖励。"""
+        active_plants = [
+            plant for plant in game_state.plants
+            if self._is_curriculum_cell_enabled(plant.row, plant.col)
+        ]
+        active_zombies = [
+            zombie for zombie in game_state.zombies
+            if self._is_curriculum_row_enabled(zombie.row)
+        ]
         self.last_sun = game_state.sun
-        self.last_zombie_count = len(game_state.zombies)
-        self.last_zombies_state = list(game_state.zombies)  # 更新僵尸列表副本
-        self.last_plant_count = len(game_state.plants)
+        self.last_zombie_count = len(active_zombies)
+        self.last_zombies_state = list(active_zombies)  # 更新启用行僵尸副本
+        self.last_plant_count = len(active_plants)
         self.last_wave = game_state.wave
         if potential is None:
             potential = self._calculate_potential(game_state)

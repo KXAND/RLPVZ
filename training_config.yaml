@@ -12,6 +12,8 @@ game:
   rows: 6                       # 行数 (泳池6行)
   cols: 9                       # 列数
   initial_sun: 50               # 初始阳光
+  win_condition: "survival_sublevels"
+  target_sublevels: 2
 
 # =============================================================================
 # 卡槽配置 (10张卡)
@@ -199,38 +201,76 @@ rewards:
 curriculum:
   stage_gate:
     # mean_* 阈值统计的 episode 窗口长度；窗口不足时按已有 episode 计算。
-    metric_window: 5
+    metric_window: 100
     stages:
       # 达到 min_episodes && mean_reward_threshold && mean_success_rate_threshold 后升阶。
-      - stage_name: "warmup_day_rows"
+      - stage_name: "combat_day_rows_pea"
+        game_mode_id: 1
+        level: null
+        rows: 5
+        cols: 9
+        enabled_rows: [0, 1, 2]
+        enabled_plants: [0]
+        initial_sun: 300
+        win_condition: "survival_sublevels"
+        target_sublevels: 1
+        # 当前阶段至少完成的 episode 数。
+        min_episodes: 8
+        # 最近 metric_window 个 episode reward 的平均值阈值。
+        mean_reward_threshold: 500.0
+        # 最近 metric_window 个 episode 胜率平均值；小数比例，取值范围 0.0-1.0。
+        mean_success_rate_threshold: 0.7
+      
+      - stage_name: "economy_day_rows_sun_pea"
         game_mode_id: 11
         level: null
         rows: 5
         cols: 9
         enabled_rows: [0, 1, 2]
-        enabled_plants: [1, 0, 2]
-        initial_sun: 200
+        enabled_plants: [1, 0]
+        initial_sun: 50
+        win_condition: "survival_sublevels"
+        target_sublevels: 1
         # 当前阶段至少完成的 episode 数。
-        min_episodes: 3
+        min_episodes: 12
         # 最近 metric_window 个 episode reward 的平均值阈值。
-        mean_reward_threshold: 100.0
+        mean_reward_threshold: 350.0
         # 最近 metric_window 个 episode 胜率平均值；小数比例，取值范围 0.0-1.0。
-        mean_success_rate_threshold: 1.0
-      
-      - stage_name: "warmup_day_full_rows"
+        mean_success_rate_threshold: 0.75
+
+      - stage_name: "defense_day_rows_sun_pea_wall"
+        game_mode_id: 11
+        level: null
+        rows: 5
+        cols: 9
+        enabled_rows: [0, 1, 2]
+        enabled_plants: [1, 0, 3]
+        initial_sun: 200
+        win_condition: "survival_sublevels"
+        target_sublevels: 1
+        # 当前阶段至少完成的 episode 数。
+        min_episodes: 10
+        # 最近 metric_window 个 episode reward 的平均值阈值。
+        mean_reward_threshold: 500.0
+        # 最近 metric_window 个 episode 胜率平均值；小数比例，取值范围 0.0-1.0。
+        mean_success_rate_threshold: 0.75
+
+      - stage_name: "defense_day_full_rows"
         game_mode_id: 11
         level: null
         rows: 5
         cols: 9
         enabled_rows: [0, 1, 2, 3, 4]
-        enabled_plants: [1, 0, 2]
+        enabled_plants: [1, 0, 3]
         initial_sun: 200
+        win_condition: "survival_sublevels"
+        target_sublevels: 1
         # 当前阶段至少完成的 episode 数。
-        min_episodes: 2
+        min_episodes: 12
         # 最近 metric_window 个 episode reward 的平均值阈值。
-        mean_reward_threshold: 100.0
+        mean_reward_threshold: 700.0
         # 最近 metric_window 个 episode 胜率平均值；小数比例，取值范围 0.0-1.0。
-        mean_success_rate_threshold: 0.0
+        mean_success_rate_threshold: 0.65
 
       - stage_name: "full_pool"
         game_mode_id: 13
@@ -240,6 +280,8 @@ curriculum:
         enabled_rows: [0, 1, 2, 3, 4, 5]
         enabled_plants: [1, 0, 7, 16, 3, 17, 2, 43, 18, 39]
         initial_sun: 50
+        win_condition: "survival_sublevels"
+        target_sublevels: 2
 
 # =============================================================================
 # 训练配置

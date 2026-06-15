@@ -106,6 +106,7 @@ class PVZEnv(gym.Env):
         log_verbose: int = 1,  # 文件日志级别: 0=静默, 1=关键信息, 2=详细调试
         env_spec: Optional[EnvSpec] = None,
         scenario_spec: Optional[ScenarioSpec] = None,
+        worker_id: Optional[int] = None,
     ):
         """
         初始化环境
@@ -118,6 +119,7 @@ class PVZEnv(gym.Env):
             game_speed: 游戏速度倍率 (1.0-10.0, 默认5.0)
             hook_port: Hook DLL TCP 端口（多实例并行时使用不同端口）
             verbose: 日志级别 (0=静默, 1=关键信息, 2=详细调试)
+            worker_id: 异步训练 worker 编号，用于区分多实例日志
         """
         super().__init__()
         
@@ -127,6 +129,7 @@ class PVZEnv(gym.Env):
         self.game_speed = max(0.1, min(100.0, game_speed))  # 支持最高 100x 速度
         self.hook_port = hook_port  # 保存端口
         self.target_pid = target_pid
+        self.worker_id = worker_id
         self.verbose = verbose  # 日志级别
         self.log_verbose = log_verbose
         
@@ -316,6 +319,8 @@ class PVZEnv(gym.Env):
 
     def _emit(self, message: str, console_level: int = 1, log_level: Optional[int] = None):
         effective_log_level = console_level if log_level is None else log_level
+        if self.worker_id is not None:
+            message = f"[Worker {self.worker_id}] {message}"
         if self._should_console(console_level):
             print(message)
             return

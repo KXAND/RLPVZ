@@ -73,7 +73,7 @@ class DDQNWorkerPool(AsyncWorkerPool):
             pass
 
 
-def _build_worker_env(args, instance, env_spec=None, scenario_spec=None):
+def _build_worker_env(args, instance, worker_id=None, env_spec=None, scenario_spec=None):
     from envs import PVZEnv
     from .adapter import DDQNEnvAdapter
 
@@ -87,6 +87,7 @@ def _build_worker_env(args, instance, env_spec=None, scenario_spec=None):
         log_verbose=args.file_log_level,
         env_spec=env_spec,
         scenario_spec=scenario_spec,
+        worker_id=worker_id,
     )
     return DDQNEnvAdapter(env, env_spec=env_spec, scenario_spec=scenario_spec)
 
@@ -152,7 +153,7 @@ def ddqn_worker_main(
     env = None
     try:
         setup_worker_logging(args)
-        env = _build_worker_env(args, instance, env_spec, scenario_spec)
+        env = _build_worker_env(args, instance, worker_id, env_spec, scenario_spec)
         network = QNetwork(env, learning_rate=args.ddqn_lr, device="cpu")
         network.load_state_dict(initial_state_dict)
         network.eval()

@@ -232,9 +232,10 @@ class DDQNConsoleReporter:
         print("\r" + progress_line + padding, end="", flush=True)
         self._last_progress_width = len(progress_line)
 
-    def print_eval(self, eval_stats, progress_line):
+    def print_eval(self, eval_stats, progress_line, stage_name=""):
+        stage_text = f" | stage={stage_name}" if stage_name else ""
         print(
-            f"\n[Eval] Episode {eval_stats.episode} | "
+            f"\n[Eval] Episode {eval_stats.episode}{stage_text} | "
             f"avg_score={eval_stats.avg_score:.2f} | "
             f"avg_iter={eval_stats.avg_iterations:.2f}",
             flush=True,

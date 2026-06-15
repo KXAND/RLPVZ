@@ -1,5 +1,7 @@
 import queue
 
+from utils.train_utils import get_current_stage_name, load_training_config
+
 from .ddqn import experienceReplayBuffer
 from .learner import DDQNLearner
 from .monitoring import (
@@ -36,7 +38,10 @@ class AsyncDDQNTrainer:
         )
         self.batch_size = args.ddqn_batch_size
         self.reward_threshold = 30000
-        self.stats = DDQNTrainingStats(window=100)
+        config = load_training_config(getattr(args, "training_config", None))
+        self.stats = DDQNTrainingStats(
+            window=max(1, int(config.get("metric_window", 100)))
+        )
 
         self.transition_count = 0
         self.solved = False
@@ -178,7 +183,12 @@ class AsyncDDQNTrainer:
             if self.stats.should_evaluate(evaluate_frequency):
                 eval_stats = self.stats.record_eval(evaluate_n_iter)
                 self.metric_emitter.emit_eval(eval_stats, self.transition_count)
-                self.reporter.print_eval(eval_stats, progress_line)
+                stage_name = (
+                    get_current_stage_name(self.context.curriculum)
+                    if self.context is not None
+                    else ""
+                )
+                self.reporter.print_eval(eval_stats, progress_line, stage_name)
 
     def _emit_training_metrics(self, force=False):
         self.metric_emitter.emit_snapshot(self.stats.to_snapshot(force=force))

@@ -114,7 +114,7 @@ def _build_stage_gate_strategy(
     stage_gate_cfg = config.get("curriculum", {}).get("stage_gate", {}) or {}
     raw_stages = stage_gate_cfg.get("stages", []) or []
     _, stage_scenarios = build_scenario_specs(config, CURRICULUM_STAGE_GATE)
-    metric_window = int(stage_gate_cfg.get("metric_window", 100))
+    metric_window = int(config.get("metric_window", 100))
 
     if not raw_stages:
         return StageGateCurriculumStrategy(

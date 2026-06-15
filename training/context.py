@@ -46,11 +46,18 @@ class TrainContext:
 
     def update_curriculum(self, metrics: dict[str, Any]) -> tuple[bool, ScenarioSpec]:
         # Runtime 边界：算法只上报 episode 指标，阶段推进与事件记录在这里完成。
+        old_stage_name = get_current_stage_name(self.curriculum)
         old_scenario = self.scenario_spec
         new_scenario = self.curriculum.update(metrics)
         changed = new_scenario != old_scenario
         if changed:
             self.scenario_spec = new_scenario
+            new_stage_name = get_current_stage_name(self.curriculum)
+            print(
+                f"\n[Curriculum] Episode {metrics.get('episode_count')} | "
+                f"{old_stage_name} -> {new_stage_name}",
+                flush=True,
+            )
             self.metrics.emit(
                 MetricEvent(
                     source="runtime",

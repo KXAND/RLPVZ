@@ -200,8 +200,6 @@ rewards:
 # 直接运行: .\.venv\Scripts\python.exe train.py
 curriculum:
   stage_gate:
-    # mean_* 阈值统计的 episode 窗口长度；窗口不足时按已有 episode 计算。
-    metric_window: 100
     stages:
       # 达到 min_episodes && mean_reward_threshold && mean_success_rate_threshold 后升阶。
       - stage_name: "combat_day_rows_pea"
@@ -282,6 +280,12 @@ curriculum:
         initial_sun: 50
         win_condition: "survival_sublevels"
         target_sublevels: 2
+
+# =============================================================================
+# 统计窗口配置
+# =============================================================================
+# Stage-gate curriculum 与 DDQN 控制台共用的 recent metrics 窗口。
+metric_window: 10
 
 # =============================================================================
 # 训练配置

@@ -935,6 +935,7 @@ class PVZEnv(gym.Env):
                     
                     base_win = self.rewards.get('game_win', 3.0)
                     streak_bonus = self.win_streak * self.rewards.get('streak_bonus', 1.0)
+                    reward += base_win + streak_bonus
                     # 无僵尸空窗计数，用于额外胜利兜底
                     self._no_zombie_steps = 0
                     step_reward_details['win'] = base_win + streak_bonus

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Any
 
+from data.game_modes import SURVIVAL_GAME_MODE_IDS
 from utils.train_utils import load_training_config
 
 
@@ -28,6 +29,8 @@ class ScenarioSpec:
     enabled_rows: tuple[int, ...]
     enabled_plants: tuple[int, ...]
     initial_sun: int | None
+    win_condition: str
+    target_sublevels: int
 
 
 def build_specs(args: Any) -> tuple[EnvSpec, ScenarioSpec]:
@@ -93,6 +96,8 @@ def build_scenario_specs(
     config_rows = int(game_cfg.get("rows", 6))
     config_cols = int(game_cfg.get("cols", 9))
     initial_sun = game_cfg.get("initial_sun", 50)
+    win_condition = str(game_cfg.get("win_condition", "level_end"))
+    target_sublevels = int(game_cfg.get("target_sublevels", 1))
     level = game_cfg.get("level")
     base_scenario = ScenarioSpec(
         game_mode_id=int(game_cfg.get("game_mode_id", 13)),
@@ -103,6 +108,8 @@ def build_scenario_specs(
         enabled_rows=tuple(range(config_rows)),
         enabled_plants=cards,
         initial_sun=None if initial_sun is None else int(initial_sun),
+        win_condition=win_condition,
+        target_sublevels=target_sublevels,
     )
     validate_scenario_spec(base_scenario)
 
@@ -136,6 +143,10 @@ def _build_stage_scenario(
     raw_enabled_plants = stage_cfg.get("enabled_plants")
     raw_level = stage_cfg.get("level", base_scenario.level)
     raw_initial_sun = stage_cfg.get("initial_sun", base_scenario.initial_sun)
+    win_condition = str(stage_cfg.get("win_condition", base_scenario.win_condition))
+    target_sublevels = int(
+        stage_cfg.get("target_sublevels", base_scenario.target_sublevels)
+    )
     enabled_rows = (
         tuple(range(rows))
         if raw_enabled_rows is None
@@ -155,6 +166,8 @@ def _build_stage_scenario(
         enabled_rows=enabled_rows,
         enabled_plants=enabled_plants,
         initial_sun=None if raw_initial_sun is None else int(raw_initial_sun),
+        win_condition=win_condition,
+        target_sublevels=target_sublevels,
     )
     validate_scenario_spec(scenario)
     return scenario
@@ -194,6 +207,17 @@ def validate_scenario_spec(
 ) -> None:
     if scenario.rows <= 0 or scenario.cols <= 0:
         raise ValueError("ScenarioSpec.rows/cols 必须为正数")
+    if scenario.win_condition not in {"level_end", "survival_sublevels"}:
+        raise ValueError(
+            "ScenarioSpec.win_condition 只支持 level_end 或 survival_sublevels"
+        )
+    if scenario.target_sublevels < 1:
+        raise ValueError("ScenarioSpec.target_sublevels 必须 >= 1")
+    if (
+        scenario.win_condition == "survival_sublevels"
+        and int(scenario.game_mode_id) not in SURVIVAL_GAME_MODE_IDS
+    ):
+        raise ValueError("survival_sublevels 仅支持 survival 类 game_mode_id")
     if expected_cards is not None and tuple(expected_cards) != tuple(scenario.cards):
         raise ValueError(
             f"ScenarioSpec cards mismatch: expected {tuple(expected_cards)}, "

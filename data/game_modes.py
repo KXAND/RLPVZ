@@ -34,4 +34,5 @@ POOL_GAME_MODE_IDS = frozenset(
         int(GameMode.SURVIVAL_ENDLESS_POOL),
     }
 )
+SURVIVAL_GAME_MODE_IDS = frozenset(int(mode) for mode in GameMode)
 POOL_WATER_ROWS = (2, 3)

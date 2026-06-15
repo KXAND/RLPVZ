@@ -169,6 +169,8 @@ class PVZEnv(gym.Env):
             )
         self.current_scenario: ScenarioSpec | None = None
         level = self.config['game'].get('level')
+        win_condition = str(self.config['game'].get('win_condition', 'level_end'))
+        target_sublevels = int(self.config['game'].get('target_sublevels', 1))
         fallback_scenario = ScenarioSpec(
             game_mode_id=self.game_mode,
             level=None if level is None else int(level),
@@ -178,12 +180,16 @@ class PVZEnv(gym.Env):
             enabled_rows=tuple(range(config_rows)),
             enabled_plants=tuple(self.card_plant_ids),
             initial_sun=self.initial_sun,
+            win_condition=win_condition,
+            target_sublevels=target_sublevels,
         )
         self._pending_scenario: ScenarioSpec | None = scenario_spec or fallback_scenario
         self.scenario_rows = config_rows
         self.scenario_cols = config_cols
         self.enabled_rows = set(range(config_rows))
         self.enabled_plants = set(self.card_plant_ids)
+        self.win_condition = win_condition
+        self.target_sublevels = target_sublevels
         self._apply_pending_scenario()
         
         # 动作空间: 种植动作 + 可选铲子动作 + 等待
@@ -280,6 +286,7 @@ class PVZEnv(gym.Env):
         self.last_zombie_count = 0
         self.last_plant_count = 0
         self.last_wave = 0
+        self.last_total_waves = 0
         self.sunflower_count = 0
         self._cached_game_state = None  # 缓存游戏状态，减少内存读取
         self.last_potential = 0.0
@@ -310,6 +317,9 @@ class PVZEnv(gym.Env):
         self._episode_win = None  # 回合是否胜利
         self._victory_printed = False  # 是否已打印胜利信息
         self._no_zombie_steps = 0  # 连续无僵尸的步数
+        self.completed_sublevels = 0
+        self.sublevel_cleared_this_step = False
+        self._survival_sublevel_completion_latched = False
 
     def _should_console(self, level: int) -> bool:
         return self.verbose >= level
@@ -365,6 +375,12 @@ class PVZEnv(gym.Env):
         self.scenario_cols = int(scenario_spec.cols)
         self.enabled_rows = set(int(row) for row in scenario_spec.enabled_rows)
         self.enabled_plants = set(int(plant) for plant in scenario_spec.enabled_plants)
+        self.win_condition = str(scenario_spec.win_condition)
+        self.target_sublevels = int(scenario_spec.target_sublevels)
+        self.completed_sublevels = 0
+        self.sublevel_cleared_this_step = False
+        self._survival_sublevel_completion_latched = False
+        self.last_total_waves = 0
         self._last_inactive_row_clear_clock = None
         self._pending_scenario = None
         return True
@@ -751,6 +767,10 @@ class PVZEnv(gym.Env):
         self._victory_printed = False  # 重置胜利打印标记
         self._no_zombie_steps = 0  # 重置无僵尸计数
         self._last_inactive_row_clear_clock = None
+        self.completed_sublevels = 0
+        self.sublevel_cleared_this_step = False
+        self._survival_sublevel_completion_latched = False
+        self.last_total_waves = 0
         
         # 重置热力图
         if hasattr(self, 'kill_heatmap'):
@@ -776,6 +796,7 @@ class PVZEnv(gym.Env):
             self.last_zombies_state = list(active_zombies)  # 保存启用行僵尸用于追踪有效击杀
             self.last_plant_count = len(active_plants)
             self.last_wave = game_state.wave
+            self.last_total_waves = game_state.total_waves
             self.sunflower_count = sum(1 for p in active_plants if p.type == PlantType.SUNFLOWER)
             # 初始化小推车状态
             for lm in game_state.lawnmowers:
@@ -899,9 +920,21 @@ class PVZEnv(gym.Env):
         terminated = False
         truncated = False
         self._episode_win = None  # 记录胜负
+        self.sublevel_cleared_this_step = False
         
         if game_state is None:
             # 游戏状态读取失败
+            if self.win_condition == "survival_sublevels":
+                current_ui = self.hook_client.get_ui() if self.hook_client else -1
+                self._emit(
+                    "[Debug] game_state=None, "
+                    f"ui={current_ui}, "
+                    f"last_total_waves={self.last_total_waves}, "
+                    f"last_wave={self.last_wave}, "
+                    f"completed_sublevels={self.completed_sublevels}/{self.target_sublevels}",
+                    console_level=2,
+                    log_level=2,
+                )
             truncated = True
         else:
             # [调试] 输出关键状态
@@ -914,6 +947,26 @@ class PVZEnv(gym.Env):
                 )
                 self._emit(
                     f"  game_state类型={type(game_state).__name__}, 有level_end_countdown属性={hasattr(game_state, 'level_end_countdown')}",
+                    console_level=2,
+                    log_level=2,
+                )
+            if (
+                self.win_condition == "survival_sublevels"
+                and (
+                    game_state.wave < self.last_wave
+                    or self.last_wave >= max(1, self.last_total_waves - 2)
+                    or game_state.wave >= max(1, game_state.total_waves - 2)
+                )
+            ):
+                self._emit(
+                    "[Debug] "
+                    f"prev=({self.last_wave}/{self.last_total_waves}) -> "
+                    f"curr=({game_state.wave}/{game_state.total_waves}), "
+                    f"level_end_cd={level_end_cd}, "
+                    f"refresh_cd={getattr(game_state, 'refresh_countdown', -1)}, "
+                    f"huge_wave_cd={getattr(game_state, 'huge_wave_countdown', -1)}, "
+                    f"game_clock={getattr(game_state, 'game_clock', -1)}, "
+                    f"completed={self.completed_sublevels}/{self.target_sublevels}",
                     console_level=2,
                     log_level=2,
                 )
@@ -1548,7 +1601,8 @@ class PVZEnv(gym.Env):
         终止条件:
         - 小推车丢失 (state != READY): 失败
         - 僵尸 X < -70: 失败 (僵尸进屋)
-        - level_end_countdown > 0: 胜利 (关卡即将结束)
+        - level_end_countdown > 0: 普通模式胜利
+        - survival_sublevels 达到目标小关数: 生存模式胜利
 
         Returns:
             (terminated, win)
@@ -1561,6 +1615,42 @@ class PVZEnv(gym.Env):
         # 检查失败条件: 僵尸进屋 (X < -70)
         if self._check_lawnmower_fail(game_state):
             return True, False
+
+        if self.win_condition == "survival_sublevels":
+            level_end_cd = getattr(game_state, 'level_end_countdown', 0)
+            countdown_detected = (
+                game_state.total_waves > 0
+                and game_state.wave >= game_state.total_waves
+                and level_end_cd > 0
+            )
+            if not countdown_detected:
+                self._survival_sublevel_completion_latched = False
+            if (
+                not self._survival_sublevel_completion_latched
+                and countdown_detected
+            ):
+                self.completed_sublevels += 1
+                self.sublevel_cleared_this_step = True
+                self._survival_sublevel_completion_latched = True
+                self._emit(
+                    "[Debug] sublevel clear detected: "
+                    f"prev=({self.last_wave}/{self.last_total_waves}) -> "
+                    f"curr=({game_state.wave}/{game_state.total_waves}), "
+                    f"level_end_cd={level_end_cd}, "
+                    "signal=level_end_countdown, "
+                    f"completed_sublevels={self.completed_sublevels}/{self.target_sublevels}",
+                    console_level=2,
+                    log_level=2,
+                )
+                if self.completed_sublevels >= self.target_sublevels:
+                    self._emit(
+                        "[Debug] survival_sublevels win confirmed: "
+                        f"completed_sublevels={self.completed_sublevels}/{self.target_sublevels}",
+                        console_level=2,
+                        log_level=2,
+                    )
+                    return True, True
+            return False, False
 
         # 检查胜利条件: level_end_countdown > 0
         level_end_cd = getattr(game_state, 'level_end_countdown', 0)
@@ -1587,6 +1677,7 @@ class PVZEnv(gym.Env):
         self.last_zombies_state = list(active_zombies)  # 更新启用行僵尸副本
         self.last_plant_count = len(active_plants)
         self.last_wave = game_state.wave
+        self.last_total_waves = game_state.total_waves
         if potential is None:
             potential = self._calculate_potential(game_state)
         self.last_potential = potential
@@ -2254,6 +2345,15 @@ class PVZEnv(gym.Env):
             "plants_lost": self.plants_lost,
             "win": self._episode_win if self._episode_win is not None else False,
             "game_ended": self._episode_win is not None,  # True=游戏正常结束, False=超时/中断
+            "win_condition": self.win_condition,
+            "target_sublevels": self.target_sublevels,
+            "completed_sublevels": self.completed_sublevels,
+            "sublevel_cleared_this_step": self.sublevel_cleared_this_step,
+            "current_sublevel_index": (
+                self.completed_sublevels
+                if self._episode_win is True and self.sublevel_cleared_this_step
+                else self.completed_sublevels + 1
+            ),
             # Debug/diagnostic fields
             "hook_connected": bool(self.hook_client.connected) if self.hook_client else False,
             "pvz_attached": bool(self.pvz.is_attached()) if self.pvz else False,

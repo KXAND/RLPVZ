@@ -227,22 +227,17 @@ class DDQNMetricEmitter:
 
 class DDQNConsoleReporter:
     def print_progress(self, episode_stats):
-        progress_line = episode_stats.progress_line
-        padding = " " * max(0, getattr(self, "_last_progress_width", 0) - len(progress_line))
-        print("\r" + progress_line + padding, end="", flush=True)
-        self._last_progress_width = len(progress_line)
+        print(episode_stats.progress_line, flush=True)
 
     def print_eval(self, eval_stats, progress_line, stage_name=""):
         stage_text = f" | stage={stage_name}" if stage_name else ""
         print(
-            f"\n[Eval] Episode {eval_stats.episode}{stage_text} | "
+            f"[Eval] Episode {eval_stats.episode}{stage_text} | "
             f"avg_score={eval_stats.avg_score:.2f} | "
             f"avg_iter={eval_stats.avg_iterations:.2f}",
             flush=True,
         )
-        padding = " " * max(0, getattr(self, "_last_progress_width", 0) - len(progress_line))
-        print("\r" + progress_line + padding, end="", flush=True)
-        self._last_progress_width = len(progress_line)
+        print(flush=True)
 
     def print_checkpoint(self, episode_count):
         print(

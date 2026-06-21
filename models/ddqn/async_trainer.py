@@ -1,4 +1,5 @@
 import queue
+import os
 
 import numpy as np
 
@@ -186,15 +187,24 @@ class AsyncDDQNTrainer:
                 self.solved = True
                 return
 
-            if self.stats.episode_count % 500 == 0:
-                import gc
+            if self.stats.episode_count % 100 == 0:
+                import gc, os
 
                 gc.collect()
                 try:
-                    import torch
+                    import torch, psutil
 
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
+                    proc = psutil.Process(os.getpid())
+                    mem_mb = proc.memory_info().rss / 1024 / 1024
+                    buf_pct = len(self.buffer.replay_memory) / max(1, self.buffer.memory_size) * 100
+                    qsize = worker_pool.transition_queue.qsize()
+                    print(f"\n[MEM] main PID={os.getpid()} RSS={mem_mb:.0f}MB  "
+                          f"buffer={buf_pct:.0f}%  queue={qsize}  "
+                          f"ep={self.stats.episode_count}  "
+                          f"loss_cap={len(self.stats.training_loss)}",
+                          flush=True)
                 except Exception:
                     pass
 

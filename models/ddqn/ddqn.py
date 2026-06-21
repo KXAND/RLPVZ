@@ -6,7 +6,8 @@ from collections import deque, namedtuple
 
 class QNetwork(nn.Module):
     def __init__(self, env, learning_rate=1e-3, device="cpu",
-                 hidden_sizes=None, n_inputs_override=None):
+                 hidden_sizes=None, n_inputs_override=None,
+                 create_optimizer=True):
         """Deep Q-Network with configurable hidden layers.
 
         Args:
@@ -17,6 +18,7 @@ class QNetwork(nn.Module):
                 Default [256, 128] for backward compatibility.
             n_inputs_override: Override the auto-computed n_inputs.
                 Used when the adapter produces a different observation size.
+            create_optimizer: If False, skip Adam creation (worker/inference only).
         """
         super().__init__()
         self.device = device
@@ -50,9 +52,12 @@ class QNetwork(nn.Module):
         if self.device == "cuda":
             self.network.cuda()
 
-        self.optimizer = torch.optim.Adam(
-            filter(lambda p: p.requires_grad, self.parameters()), lr=self.learning_rate
-        )
+        self.optimizer = None
+        if create_optimizer:
+            self.optimizer = torch.optim.Adam(
+                filter(lambda p: p.requires_grad, self.parameters()),
+                lr=self.learning_rate,
+            )
 
     def decide_action(self, state, mask, epsilon):
         if np.random.random() < epsilon:

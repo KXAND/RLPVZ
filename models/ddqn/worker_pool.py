@@ -141,8 +141,10 @@ def ddqn_worker_main(
         network.load_state_dict(initial_state_dict)
         network.eval()
 
+        # Match epsilon decay span to the configured episode count
+        epsilon_seq_length = max(1, int(getattr(args, "ddqn_episodes", 10000)))
         threshold = Threshold(
-            seq_length=100000,
+            seq_length=epsilon_seq_length,
             start_epsilon=1.0,
             interpolation="exponential",
             end_epsilon=0.05,

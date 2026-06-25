@@ -1,19 +1,19 @@
 # PVZ AI 训练配置
-# Survival Day (Normal) - 生存白天普通，只有5波
+# Survival Day Curriculum - 生存白天课程学习
 
 # =============================================================================
 # 游戏设置
 # =============================================================================
 game:
-  mode: "survival_pool_endless" # 游戏模式: 生存模式(泳池无尽)
-  game_mode_id: 13              # mode 13 = 生存泳池无尽
-  background_type: 2            # BACKGROUND_3_POOL
-  map: "pool"                   # 地图类型: 泳池 (6行)
-  rows: 6                       # 行数 (泳池6行)
+  mode: "survival_day_endless"  # 游戏模式: 生存模式(白天无尽)
+  game_mode_id: 11              # mode 11 = 生存白天无尽
+  background_type: 0            # BACKGROUND_1_DAY
+  map: "day"                    # 地图类型: 白天 (5行)
+  rows: 5                       # 行数 (白天5行)
   cols: 9                       # 列数
   initial_sun: 50               # 初始阳光
   win_condition: "survival_sublevels"
-  target_sublevels: 2
+  target_sublevels: 3
 
 # =============================================================================
 # 卡槽配置 (10张卡)
@@ -22,7 +22,7 @@ cards:
   slot_count: 10                # 卡槽数量
   
   plants:
-    # 泳池最优卡组 - 经过测试的配置
+    # 白天课程学习最终卡组
     
     # 卡槽0: 向日葵 (经济基础)
     - slot: 0
@@ -36,18 +36,17 @@ cards:
       name: "Peashooter"
       cost: 100
       
-    # 卡槽2: 双发射手 (主力输出)
+    # 卡槽2: 寒冰射手 (控制)
     - slot: 2
+      id: 5
+      name: "Snow Pea"
+      cost: 175
+      
+    # 卡槽3: 双发射手 (主力输出)
+    - slot: 3
       id: 7
       name: "Repeater"
       cost: 200
-      
-    # 卡槽3: 睡莲 (水域必备)
-    - slot: 3
-      id: 16
-      name: "Lily Pad"
-      cost: 25
-      is_aquatic: true
       
     # 卡槽4: 坚果墙 (防御)
     - slot: 4
@@ -69,18 +68,17 @@ cards:
       cost: 150
       is_instant: true
       
-    # 卡槽7: 香蒲 (水域输出)
+    # 卡槽7: 地刺 (地面持续伤害)
     - slot: 7
-      id: 43
-      name: "Cattail"
-      cost: 225
-      is_aquatic: true
+      id: 21
+      name: "Spikeweed"
+      cost: 100
       
-    # 卡槽8: 三线射手 (多行覆盖)
+    # 卡槽8: 玉米投手 (控制/中期过渡)
     - slot: 8
-      id: 18
-      name: "Threepeater"
-      cost: 325
+      id: 34
+      name: "Kernel-pult"
+      cost: 100
       
     # 卡槽9: 西瓜投手 (后期AOE)
     - slot: 9
@@ -93,13 +91,13 @@ cards:
 # =============================================================================
 action_space:
   type: "discrete"
-  # 10张卡 × 54格 (6行×9列) + 等待
-  # = 540 + 1 = 541 动作
+  # 10张卡 × 45格 (5行×9列) + 等待
+  # = 450 + 1 = 451 动作
   # 当前环境实现禁用铲子动作，避免动作空间和 mask 不一致。
-  size: 541
+  size: 451
   
   structure:
-    plant_actions: 540          # 种植动作 (10卡 × 54格)
+    plant_actions: 450          # 种植动作 (10卡 × 45格)
     shovel_actions: 0           # 当前禁用铲除动作
     wait_action: 1              # 等待动作
 
@@ -109,7 +107,7 @@ action_space:
 observation_space:
   # 网格特征 (CNN输入) - 13通道完整版
   grid:
-    shape: [6, 9, 13]           # 6行 × 9列 × 13通道
+    shape: [5, 9, 13]           # 5行 × 9列 × 13通道
     channels:
       - "plant_type"            # 通道0: 植物类型ID (归一化)
       - "plant_hp"              # 通道1: 植物血量比例
@@ -125,7 +123,7 @@ observation_space:
       - "threat_heatmap"        # 通道11: 威胁热力图 (僵尸威胁扩散)
       - "kill_heatmap"          # 通道12: 击杀热力图 (历史击杀位置)
   
-  # 全局特征 (MLP输入) - 扩展到50+维
+  # 全局特征 (MLP输入)
   global:
     features:
       - "sun"                   # 当前阳光 (1)
@@ -137,16 +135,16 @@ observation_space:
       - "zombie_count"          # 僵尸总数 (1)
       - "zombie_total_hp"       # 僵尸总血量 (1)
       - "plant_count"           # 植物总数 (1)
-      - "lawnmower_status"      # 小推车状态 (6) - 每行一个 (泳池6行)
+      - "lawnmower_status"      # 小推车状态 (5) - 每行一个
       - "cards_cd_ratio"        # 10张卡的CD比例 (10) - 0~1连续值
       - "cards_affordable"      # 10张卡是否买得起 (10)
-      - "row_threat"            # 每行威胁度 (6) - 僵尸血量加权 (泳池6行)
-      - "row_defense"           # 每行防御力 (6) - 植物数量和类型 (泳池6行)
+      - "row_threat"            # 每行威胁度 (5) - 僵尸血量加权
+      - "row_defense"           # 每行防御力 (5) - 植物数量和类型
       - "huge_wave_countdown"   # 大波倒计时 (1)
       - "zombie_refresh_hp"     # 出怪血量阈值 (1)
-      - "ice_trails"            # 冰道状态 (6) - 每行是否有冰道
+      - "ice_trails"            # 冰道状态 (5) - 每行是否有冰道
       - "next_wave_preview"     # 下一波出怪预告 (10) - 各类型僵尸数量归一化
-    total_dim: 75               # 9 + 6 + 10 + 10 + 6 + 6 + 1 + 1 + 6 + 10 + 10(预留)
+    total_dim: 71               # 61个实际特征 + 10个预留维度
 
   # 卡片属性特征 (Embedding输入) - 新增
   # 形状: [10, 7] (10张卡，每张卡7个属性)
@@ -155,43 +153,43 @@ observation_space:
     shape: [10, 7]
 
 # =============================================================================
-# 奖励配置 (归一化版 - 所有奖励在 -3 ~ +3 范围内)
+# 奖励配置 (DDQN 版 - 终局/波次奖励明显高于局部 shaping，但保持同一数量级)
 # =============================================================================
 rewards:
-  # 正向奖励 - 清晰的信号 (缩小100倍)
+  # 正向奖励 - 先保证局部行为有反馈，再让过波/通关成为主目标
   zombie_kill:
-    normal: 3.0                 # 击杀僵尸 (杀戮才是王道)
-    conehead: 3.5
-    buckethead: 4.0
+    normal: 0.30
+    conehead: 0.45
+    buckethead: 0.70
 
-  sun_collect: 0.02             # 收集阳光 (提升，保证经济)
-  wave_complete: 100.0           # 完成一波 (大幅提升)
-  game_win: 200.0               # 通关
-  streak_bonus: 20.0            # 连胜奖励 (大幅提升，鼓励连续胜利)
-  survival_per_step: 0.0        # 存活奖励 (移除，防止苟活)
+  sun_collect: 0.01             # 收集阳光，给经济一点正反馈
+  wave_complete: 4.0            # 完成一波，是最稳定的阶段性奖励
+  game_win: 18.0                # 通关奖励，明显高于单次行为奖励
+  streak_bonus: 0.0             # 禁用跨 episode 连胜奖励，避免 DDQN 目标非平稳
+  survival_per_step: 0.0        # 不给纯苟活奖励
 
-  # 种植奖励 (核心！鼓励AI主动种植)
-  plant_sunflower: 0.0          # 种向日葵 (2000阳光开局不需要向日葵，禁止分心)
-  plant_attacker: 5.0           # 种攻击植物 (巨额提升，种下就是赚到)
-  plant_wall: 0.1               # 种坚果墙 (降低，不要只防守)
+  # 种植奖励 - 只做弱引导，避免代理学成“只要下卡就赚”
+  plant_sunflower: 0.10
+  plant_attacker: 0.35
+  plant_wall: 0.18
 
-  # 负向惩罚 - 小推车是关键！
-  plant_lost: -0.5              # 植物被吃 (适当提高惩罚，避免随意牺牲)
-  sunflower_lost: -1.0          # 向日葵被吃 (提高惩罚，保护经济)
-  lawnmower_triggered: -50.0    # 小推车触发 (适当惩罚)
-  game_lose: -50.0              # 游戏失败 (极大惩罚，让AI明白"死"比"丢植物"更可怕)
-  invalid_action: -0.005        # 无效操作 (降低惩罚，避免因系统误差导致AI不敢动)
+  # 负向惩罚 - 失败要疼，但不能大到淹没全过程信号
+  plant_lost: -0.25
+  sunflower_lost: -0.80
+  lawnmower_triggered: -50.0
+  game_lose: -12.0
+  invalid_action: -0.01
 
   potential:
-    sun_scale: 0.15
-    sun_cap: 400.0
-    plant_scale: 0.8
-    spread_bonus: 0.12
-    lawnmower_scale: 5.0        # 提高小推车在势能中的权重
-    zombie_threat_scale: 0.8
-    zombie_distance_bonus: 1.0
-    wave_scale: 0.2
-    delta_scale: 0.6
+    sun_scale: 0.06
+    sun_cap: 300.0
+    plant_scale: 0.22
+    spread_bonus: 0.06
+    lawnmower_scale: 0.35
+    zombie_threat_scale: 0.35
+    zombie_distance_bonus: 0.75
+    wave_scale: 0.05
+    delta_scale: 0.18
 
 # =============================================================================
 # 课程学习配置
@@ -202,7 +200,7 @@ curriculum:
   stage_gate:
     stages:
       # 达到 min_episodes && mean_reward_threshold && mean_success_rate_threshold 后升阶。
-      - stage_name: "combat_day_rows_pea"
+      - stage_name: "combat_day_normal_pea"
         game_mode_id: 1
         level: null
         rows: 5
@@ -210,91 +208,121 @@ curriculum:
         enabled_rows: [0, 1, 2]
         enabled_plants: [0]
         initial_sun: 300
-        win_condition: "survival_sublevels"
+        win_condition: "level_end"
         target_sublevels: 1
-        # 当前阶段至少完成的 episode 数。
-        min_episodes: 8
-        # 最近 metric_window 个 episode reward 的平均值阈值。
-        mean_reward_threshold: 500.0
-        # 最近 metric_window 个 episode 胜率平均值；小数比例，取值范围 0.0-1.0。
-        mean_success_rate_threshold: 0.7
+        min_episodes: 30
+        mean_reward_threshold: 22.0
+        mean_success_rate_threshold: 0.80
       
-      - stage_name: "economy_day_rows_sun_pea"
-        game_mode_id: 11
+      - stage_name: "economy_day_normal_sun_pea"
+        game_mode_id: 1
         level: null
         rows: 5
         cols: 9
         enabled_rows: [0, 1, 2]
         enabled_plants: [1, 0]
         initial_sun: 50
-        win_condition: "survival_sublevels"
+        win_condition: "level_end"
         target_sublevels: 1
-        # 当前阶段至少完成的 episode 数。
-        min_episodes: 12
-        # 最近 metric_window 个 episode reward 的平均值阈值。
-        mean_reward_threshold: 350.0
-        # 最近 metric_window 个 episode 胜率平均值；小数比例，取值范围 0.0-1.0。
-        mean_success_rate_threshold: 0.75
+        min_episodes: 30
+        mean_reward_threshold: 18.0
+        mean_success_rate_threshold: 0.70
 
-      - stage_name: "defense_day_rows_sun_pea_wall"
-        game_mode_id: 11
+      - stage_name: "defense_day_hard_rows"
+        game_mode_id: 6
         level: null
         rows: 5
         cols: 9
         enabled_rows: [0, 1, 2]
         enabled_plants: [1, 0, 3]
-        initial_sun: 200
-        win_condition: "survival_sublevels"
+        initial_sun: 150
+        win_condition: "level_end"
         target_sublevels: 1
-        # 当前阶段至少完成的 episode 数。
-        min_episodes: 10
-        # 最近 metric_window 个 episode reward 的平均值阈值。
-        mean_reward_threshold: 500.0
-        # 最近 metric_window 个 episode 胜率平均值；小数比例，取值范围 0.0-1.0。
-        mean_success_rate_threshold: 0.75
+        min_episodes: 30
+        mean_reward_threshold: 20.0
+        mean_success_rate_threshold: 0.65
 
-      - stage_name: "defense_day_full_rows"
+      - stage_name: "defense_day_hard_full_rows"
+        game_mode_id: 6
+        level: null
+        rows: 5
+        cols: 9
+        enabled_rows: [0, 1, 2, 3, 4]
+        enabled_plants: [1, 0, 3, 5]
+        initial_sun: 150
+        win_condition: "level_end"
+        target_sublevels: 1
+        min_episodes: 40
+        mean_reward_threshold: 24.0
+        mean_success_rate_threshold: 0.60
+
+      - stage_name: "endless_day_intro_sublevel1"
         game_mode_id: 11
         level: null
         rows: 5
         cols: 9
         enabled_rows: [0, 1, 2, 3, 4]
-        enabled_plants: [1, 0, 3]
-        initial_sun: 200
+        enabled_plants: [1, 0, 3, 5, 7, 17, 2]
+        initial_sun: 150
         win_condition: "survival_sublevels"
         target_sublevels: 1
-        # 当前阶段至少完成的 episode 数。
-        min_episodes: 12
-        # 最近 metric_window 个 episode reward 的平均值阈值。
-        mean_reward_threshold: 700.0
-        # 最近 metric_window 个 episode 胜率平均值；小数比例，取值范围 0.0-1.0。
-        mean_success_rate_threshold: 0.65
+        min_episodes: 50
+        mean_reward_threshold: 70.0
+        mean_success_rate_threshold: 0.55
 
-      - stage_name: "full_pool"
-        game_mode_id: 13
+      - stage_name: "endless_day_intro_sublevel2"
+        game_mode_id: 11
         level: null
-        rows: 6
+        rows: 5
         cols: 9
-        enabled_rows: [0, 1, 2, 3, 4, 5]
-        enabled_plants: [1, 0, 7, 16, 3, 17, 2, 43, 18, 39]
+        enabled_rows: [0, 1, 2, 3, 4]
+        enabled_plants: [1, 0, 3, 5, 7, 17, 2]
+        initial_sun: 100
+        win_condition: "survival_sublevels"
+        target_sublevels: 2
+        min_episodes: 60
+        mean_reward_threshold: 95.0
+        mean_success_rate_threshold: 0.50
+
+      - stage_name: "endless_day_full_sublevel2"
+        game_mode_id: 11
+        level: null
+        rows: 5
+        cols: 9
+        enabled_rows: [0, 1, 2, 3, 4]
+        enabled_plants: [1, 0, 5, 7, 3, 17, 2, 21, 34, 39]
         initial_sun: 50
         win_condition: "survival_sublevels"
         target_sublevels: 2
+        min_episodes: 60
+        mean_reward_threshold: 110.0
+        mean_success_rate_threshold: 0.45
+
+      - stage_name: "full_day_endless"
+        game_mode_id: 11
+        level: null
+        rows: 5
+        cols: 9
+        enabled_rows: [0, 1, 2, 3, 4]
+        enabled_plants: [1, 0, 5, 7, 3, 17, 2, 21, 34, 39]
+        initial_sun: 50
+        win_condition: "survival_sublevels"
+        target_sublevels: 3
 
 # =============================================================================
 # 统计窗口配置
 # =============================================================================
 # Stage-gate curriculum 与 DDQN 控制台共用的 recent metrics 窗口。
-metric_window: 10
+metric_window: 30
 
 # =============================================================================
 # 训练配置
 # =============================================================================
 training:
   args:
-    algo: "ppo"                # 默认算法: ppo 或 ddqn
+    algo: "ddqn"                # 默认算法: ppo 或 ddqn
     port: 12345
-    num_envs: 1
+    num_envs: 8
     base_port: 12345
     ports: ""
     pids: ""
@@ -332,8 +360,8 @@ training:
   ddqn:
     ddqn_episodes: 200000
     ddqn_gamma: 0.99
-    ddqn_batch_size: 32
-    ddqn_buffer_size: 50000
+    ddqn_batch_size: 200
+    ddqn_buffer_size: 100000
     ddqn_burn_in: 10000
     ddqn_lr: 0.001
     ddqn_update_freq: 32

@@ -10,6 +10,22 @@ from training.worker_pool import AsyncWorkerPool
 
 CURRICULUM_EPISODE_ACK = "__curriculum_episode_ack__"
 
+def _parse_worker_hidden_sizes(args) -> list[int] | None:
+    """Parse hidden sizes from args for worker-side QNetwork construction.
+
+    Handles YAML list or CLI comma-separated string.
+    """
+    raw = getattr(args, "ddqn_hidden_sizes", None)
+    if raw is None:
+        return None
+    if isinstance(raw, (list, tuple)):
+        result = [int(x) for x in raw]
+        return result if result else None
+    if isinstance(raw, str) and raw.strip():
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        return [int(p) for p in parts] if parts else None
+    return None
+
 
 class DDQNWorkerPool(AsyncWorkerPool):
     def __init__(
@@ -30,7 +46,7 @@ class DDQNWorkerPool(AsyncWorkerPool):
 
         super().__init__(instances)
         self.transition_queue = self.make_queue(maxsize=max(2048, self.batch_size * 64))
-        self.stats_queue = self.make_queue()
+        self.stats_queue = self.make_queue(maxsize=1024)
         self.weight_queues = self.make_per_worker_queues(maxsize=1)
         self.scenario_queues = self.make_per_worker_queues(maxsize=1)
 
@@ -77,6 +93,7 @@ def _build_worker_env(args, instance, worker_id=None, env_spec=None, scenario_sp
     from envs import PVZEnv
     from .adapter import DDQNEnvAdapter
 
+    use_paper = bool(getattr(args, "ddqn_paper_observation", False))
     env = PVZEnv(
         config_path=args.training_config,
         hook_port=instance["port"],
@@ -89,7 +106,10 @@ def _build_worker_env(args, instance, worker_id=None, env_spec=None, scenario_sp
         scenario_spec=scenario_spec,
         worker_id=worker_id,
     )
-    return DDQNEnvAdapter(env, env_spec=env_spec, scenario_spec=scenario_spec)
+    return DDQNEnvAdapter(
+        env, env_spec=env_spec, scenario_spec=scenario_spec,
+        use_paper_observation=use_paper,
+    )
 
 
 def _drain_latest_weights(weights_queue):
@@ -154,12 +174,33 @@ def ddqn_worker_main(
     try:
         setup_worker_logging(args)
         env = _build_worker_env(args, instance, worker_id, env_spec, scenario_spec)
-        network = QNetwork(env, learning_rate=args.ddqn_lr, device="cpu")
+        use_paper = bool(getattr(args, "ddqn_paper_observation", False))
+        hidden_sizes = _parse_worker_hidden_sizes(args)
+        n_inputs_override = None
+        if use_paper:
+            from .adapter import paper_state_dim
+            n_inputs_override = paper_state_dim(env.rows, env.cols, env.num_cards)
+
+        network = QNetwork(
+            env,
+            learning_rate=args.ddqn_lr,
+            device="cpu",
+            hidden_sizes=hidden_sizes,
+            n_inputs_override=n_inputs_override,
+            create_optimizer=False,
+        )
         network.load_state_dict(initial_state_dict)
         network.eval()
 
+        # inference_mode: stronger than no_grad, saves memory in forward pass
+        import torch as _torch
+        _inference_ctx = _torch.inference_mode()
+        _inference_ctx.__enter__()
+
+        # Match epsilon decay span to the configured episode count
+        epsilon_seq_length = max(1, int(getattr(args, "ddqn_episodes", 10000)))
         threshold = Threshold(
-            seq_length=100000,
+            seq_length=epsilon_seq_length,
             start_epsilon=1.0,
             interpolation="exponential",
             end_epsilon=0.05,
@@ -174,6 +215,7 @@ def ddqn_worker_main(
             latest_state_dict = _drain_latest_weights(weights_queue)
             if latest_state_dict is not None:
                 network.load_state_dict(latest_state_dict)
+                del latest_state_dict
 
             mask = np.array(env.mask_available_actions(), dtype=bool)
             epsilon = threshold.epsilon(local_episode)
@@ -217,6 +259,7 @@ def ddqn_worker_main(
                     latest_state_dict = _drain_latest_weights(weights_queue)
                     if latest_state_dict is not None:
                         network.load_state_dict(latest_state_dict)
+                        del latest_state_dict
 
             state = next_state.copy()
             episode_reward += reward
@@ -225,6 +268,7 @@ def ddqn_worker_main(
                 continue
 
             local_episode += 1
+
             stats_queue.put(
                 {
                     "type": "episode",

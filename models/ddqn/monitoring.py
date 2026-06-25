@@ -48,6 +48,9 @@ class EvalStats:
 
 
 class DDQNTrainingStats:
+    _MAX_LOSS_HISTORY = 20000
+    _MAX_EPISODE_HISTORY = 10000
+
     def __init__(self, window: int = 100):
         self.window = window
         self.episode_count = 0
@@ -71,6 +74,11 @@ class DDQNTrainingStats:
         self.training_iterations.append(iterations)
         self.training_successes.append(1.0 if success else 0.0)
 
+        # Cap per-episode lists
+        if len(self.training_rewards) > self._MAX_EPISODE_HISTORY:
+            self.training_rewards = self.training_rewards[-self._MAX_EPISODE_HISTORY:]
+            self.training_iterations = self.training_iterations[-self._MAX_EPISODE_HISTORY:]
+
         recent_rewards = self.training_rewards[-self.window :]
         recent_iterations = self.training_iterations[-self.window :]
         recent_successes = self.training_successes[-self.window :]
@@ -79,6 +87,11 @@ class DDQNTrainingStats:
         mean_success_rate = sum(recent_successes) / len(recent_successes)
         self.mean_training_rewards.append(mean_reward)
         self.mean_training_iterations.append(mean_iterations)
+
+        # Cap mean lists
+        if len(self.mean_training_rewards) > self._MAX_EPISODE_HISTORY:
+            self.mean_training_rewards = self.mean_training_rewards[-self._MAX_EPISODE_HISTORY:]
+            self.mean_training_iterations = self.mean_training_iterations[-self._MAX_EPISODE_HISTORY:]
 
         return EpisodeStats(
             episode=self.episode_count,
@@ -94,6 +107,8 @@ class DDQNTrainingStats:
 
     def record_loss(self, loss_value):
         self.training_loss.append(float(loss_value))
+        if len(self.training_loss) > self._MAX_LOSS_HISTORY:
+            self.training_loss = self.training_loss[-self._MAX_LOSS_HISTORY:]
 
     def record_sync(self):
         self.sync_eps.append(self.episode_count)

@@ -211,7 +211,7 @@ class AsyncDDQNTrainer:
             self._emit_training_metrics()
 
             progress_line = episode_stats.progress_line
-            self.reporter.print_progress(episode_stats)
+            self.reporter.print_progress(episode_stats, message["worker_id"])
 
             if episode_stats.mean_reward >= self.reward_threshold:
                 self.solved = True

@@ -31,8 +31,8 @@ class CheckpointPaths:
 # 构建输出目录和文件地址、格式
 def build_run_paths(args) -> RunPaths:
     algo = args.algo
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = get_model_output_dir(algo)
+    run_id = _resolve_run_id(args, output_dir)
     run_dir = os.path.join(output_dir, "runs", run_id)
     cached_model_path = get_cached_model_path(algo)
     log_dir = "logs"
@@ -50,6 +50,38 @@ def build_run_paths(args) -> RunPaths:
         log_dir=log_dir,
         log_file_path=os.path.join(log_dir, f"training_{run_id}.log"),
     )
+
+
+def _resolve_run_id(args, output_dir: str) -> str:
+    if (
+        not getattr(args, "no_auto_resume", False)
+        and os.path.exists(get_cached_model_path(args.algo))
+    ):
+        latest_run_id = _find_latest_run_id(output_dir)
+        if latest_run_id:
+            return latest_run_id
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def _find_latest_run_id(output_dir: str) -> str | None:
+    runs_dir = os.path.join(output_dir, "runs")
+    if not os.path.isdir(runs_dir):
+        return None
+
+    candidates = []
+    for run_id in os.listdir(runs_dir):
+        run_dir = os.path.join(runs_dir, run_id)
+        if not os.path.isdir(run_dir):
+            continue
+        metadata_path = os.path.join(run_dir, "run_metadata.json")
+        metrics_path = os.path.join(run_dir, "metrics.csv")
+        if not os.path.exists(metadata_path) and not os.path.exists(metrics_path):
+            continue
+        marker_path = metadata_path if os.path.exists(metadata_path) else metrics_path
+        candidates.append((os.path.getmtime(marker_path), run_id))
+    if not candidates:
+        return None
+    return max(candidates)[1]
 
 
 def get_model_output_dir(algo: str) -> str:

@@ -149,6 +149,73 @@ class TrainingCurveWriter:
         )
 
 
+def load_training_snapshot(path: str) -> TrainingSnapshot | None:
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as file:
+            raw = json.load(file)
+    except json.JSONDecodeError:
+        return None
+    return TrainingSnapshot(
+        algo=str(raw.get("algo", "")),
+        step_count=int(raw.get("step_count", 0)),
+        episode_count=int(raw.get("episode_count", 0)),
+        episode_rewards=[float(value) for value in raw.get("episode_rewards", [])],
+        mean_rewards=[float(value) for value in raw.get("mean_rewards", [])],
+        mean_iterations=[
+            float(value) for value in raw.get("mean_iterations", [])
+        ],
+        eval_steps=[int(value) for value in raw.get("eval_steps", [])],
+        eval_rewards=[float(value) for value in raw.get("eval_rewards", [])],
+        losses=[float(value) for value in raw.get("losses", [])],
+        force=bool(raw.get("force", False)),
+    )
+
+
+def load_metric_events(path: str) -> list[MetricEvent]:
+    if not os.path.exists(path):
+        return []
+    events = []
+    with open(path, "r", encoding="utf-8", newline="") as file:
+        for row in csv.DictReader(file):
+            try:
+                events.append(
+                    MetricEvent(
+                        source=row.get("source", ""),
+                        name=row.get("name", ""),
+                        value=_parse_metric_value(row.get("value", "")),
+                        step=_parse_optional_int(row.get("step")),
+                        episode=_parse_optional_int(row.get("episode")),
+                        tags=json.loads(row.get("tags") or "{}"),
+                    )
+                )
+            except (ValueError, json.JSONDecodeError):
+                continue
+    return events
+
+
+def _parse_metric_value(value: str):
+    if value == "True":
+        return True
+    if value == "False":
+        return False
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        return value
+
+
+def _parse_optional_int(value: str | None) -> int | None:
+    if value in (None, ""):
+        return None
+    return int(float(value))
+
+
 def build_metrics_pipeline(args, run_paths) -> MetricsPipeline:
     writers: list[MetricsWriter] = []
 

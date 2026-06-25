@@ -1156,31 +1156,28 @@ class PVZEnv(gym.Env):
             reward += r_survival
             details['survival'] = r_survival
             
-        # === 新增机制: 防线覆盖奖励 ===
-        # 鼓励 AI 在每一行都部署"非经济类"植物，防止被单点突破
-        covered_rows = set()
-        for plant in active_plants:
-            # 排除向日葵(1)和阳光菇(4)，其他都算防守力量
-            if plant.type not in [1, 4]: 
-                covered_rows.add(plant.row)
-        
-        # 每覆盖一行，每步给一点点奖励 (0.002 * 5 = 0.01/step)
-        r_coverage = len(covered_rows) * 0.002
-        if r_coverage > 0:
-            reward += r_coverage
-            details['coverage'] = r_coverage
+        # 防线覆盖奖励 — 从配置读取 scale，0 则跳过
+        coverage_scale = self.rewards.get('coverage', {}).get('scale', 0.0)
+        if coverage_scale > 0:
+            covered_rows = set()
+            for plant in active_plants:
+                if plant.type not in [1, 4]:
+                    covered_rows.add(plant.row)
+            r_coverage = len(covered_rows) * coverage_scale
+            if r_coverage > 0:
+                reward += r_coverage
+                details['coverage'] = r_coverage
 
-        # === 新增机制: 僵尸逼近压力 ===
-        # 如果有僵尸越过警戒线 (X < 200)，给予持续压力惩罚
-        proximity_penalty = 0.0
-        for zombie in active_zombies:
-            if zombie.x < 200:
-                # 距离越近惩罚越大，最大约 -0.005/step
-                proximity_penalty += ((200 - zombie.x) / 200.0) * 0.005
-        
-        if proximity_penalty > 0:
-            reward -= proximity_penalty
-            details['proximity'] = -proximity_penalty
+        # 僵尸逼近压力 — 从配置读取 scale，0 则跳过
+        proximity_scale = self.rewards.get('proximity', {}).get('scale', 0.0)
+        if proximity_scale > 0:
+            proximity_penalty = 0.0
+            for zombie in active_zombies:
+                if zombie.x < 200:
+                    proximity_penalty += ((200 - zombie.x) / 200.0) * proximity_scale
+            if proximity_penalty > 0:
+                reward -= proximity_penalty
+                details['proximity'] = -proximity_penalty
         
         # 阳光收集奖励
         sun_diff = game_state.sun - self.last_sun

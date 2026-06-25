@@ -158,6 +158,12 @@ rewards:
     gargantuar: 2.0             # Gargantuar
     default: 0.3                # Other zombie types
 
+  # Hardcoded reward components — explicitly zero for sparse baseline
+  coverage:
+    scale: 0.0                   # row-coverage bonus
+  proximity:
+    scale: 0.0                   # zombie-proximity penalty
+
   # All auxiliary rewards set to 0 for clean sparse baseline
   sun_collect: 0.0
   wave_complete: 0.0

@@ -263,8 +263,9 @@ class DDQNMetricEmitter:
 
 
 class DDQNConsoleReporter:
-    def print_progress(self, episode_stats):
-        print(episode_stats.progress_line, flush=True)
+    def print_progress(self, episode_stats, worker_id=None):
+        worker_text = f"Worker: {worker_id} " if worker_id is not None else ""
+        print(f"{worker_text}{episode_stats.progress_line}", flush=True)
 
     def print_eval(self, eval_stats, progress_line, stage_name=""):
         stage_text = f" | stage={stage_name}" if stage_name else ""

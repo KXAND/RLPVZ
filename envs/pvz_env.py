@@ -76,6 +76,15 @@ _ZOMBIE_THREAT_PRIORITY = {
 
 _INACTIVE_ROW_CLEAR_INTERVAL_CS = 100
 _INACTIVE_ROW_CLEAR_COL = 0
+_FILTERED_SPAWN_ZOMBIE_TYPES = {
+    int(ZombieType.BALLOON),
+    int(ZombieType.DIGGER),
+    int(ZombieType.BUNGEE),
+    int(ZombieType.GARGANTUAR),
+    int(ZombieType.GIGA_GARGANTUAR),
+    int(ZombieType.LADDER),
+    int(ZombieType.ZOMBONI),
+}
 
 
 class PVZEnv(gym.Env):
@@ -730,6 +739,20 @@ class PVZEnv(gym.Env):
         
         # 等待游戏开始
         self._require_ui(3, timeout=10.0, error_message="等待游戏开始超时")
+
+        removed_spawn_count = -1
+        if self.pvz is not None:
+            removed_spawn_count = self.pvz.remove_zombie_types_from_spawn_list(
+                _FILTERED_SPAWN_ZOMBIE_TYPES
+            )
+        if removed_spawn_count < 0:
+            self._emit("[PVZEnv] 警告: 无法修改当前关卡出怪列表", console_level=1, log_level=1)
+        elif removed_spawn_count > 0:
+            self._emit(
+                f"[PVZEnv] 已从出怪列表移除 {removed_spawn_count} 个禁用僵尸槽位",
+                console_level=1,
+                log_level=1,
+            )
         
         # reset 时应用当前场景的初始阳光。
         if self.initial_sun != 50:

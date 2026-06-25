@@ -173,9 +173,6 @@ def ddqn_worker_main(
     env = None
     try:
         setup_worker_logging(args)
-        # Enable tracemalloc for leak diagnosis
-        import tracemalloc as _tm
-        _tm.start()
         env = _build_worker_env(args, instance, worker_id, env_spec, scenario_spec)
         use_paper = bool(getattr(args, "ddqn_paper_observation", False))
         hidden_sizes = _parse_worker_hidden_sizes(args)
@@ -271,33 +268,6 @@ def ddqn_worker_main(
                 continue
 
             local_episode += 1
-            # Periodic memory cleanup in worker
-            if local_episode % 100 == 0:
-                import gc as _gc
-                _gc.collect()
-            # Periodic memory diagnostic in worker
-            if local_episode % 50 == 0 or local_episode == 1:
-                try:
-                    import os as _os, gc as _gc, tracemalloc as _tm
-                    import psutil as _psutil, logging as _logging
-                    _gc.collect()
-                    proc = _psutil.Process(_os.getpid())
-                    mem_mb = proc.memory_info().rss / 1024 / 1024
-                    _logger = _logging.getLogger("ddqn_worker")
-                    if _tm.is_tracing():
-                        snap = _tm.take_snapshot()
-                        top = snap.statistics("lineno")[:6]
-                        lines = [f"  {s.count:5d} x {s.size/1024:.0f}KB {s}" for s in top]
-                        _logger.warning(
-                            f"worker{worker_id} PID={_os.getpid()} "
-                            f"RSS={mem_mb:.0f}MB ep={local_episode}\n"
-                            + "\n".join(lines))
-                    else:
-                        _logger.warning(
-                            f"worker{worker_id} PID={_os.getpid()} "
-                            f"RSS={mem_mb:.0f}MB ep={local_episode}")
-                except Exception:
-                    pass
 
             stats_queue.put(
                 {

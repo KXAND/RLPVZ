@@ -289,19 +289,27 @@ def ddqn_worker_main(
                 _consume_scenario_queue(env, scenario_queue)
             state = _reset_env_with_retry(env, worker_id, instance, stats_queue, stop_event)
 
+    except KeyboardInterrupt:
+        stop_event.set()
     except Exception as exc:
-        stats_queue.put(
-            {
-                "type": "error",
-                "worker_id": worker_id,
-                "port": instance["port"],
-                "pid": instance["pid"],
-                "message": repr(exc),
-            }
-        )
+        if not stop_event.is_set():
+            stats_queue.put(
+                {
+                    "type": "error",
+                    "worker_id": worker_id,
+                    "port": instance["port"],
+                    "pid": instance["pid"],
+                    "message": repr(exc),
+                }
+            )
     finally:
         if env is not None:
-            env.close()
+            try:
+                env.close()
+            except KeyboardInterrupt:
+                stop_event.set()
+            except Exception:
+                pass
 
 
 def _reset_env_with_retry(env, worker_id, instance, stats_queue, stop_event):
@@ -329,4 +337,4 @@ def _reset_env_with_retry(env, worker_id, instance, stats_queue, stop_event):
             import time
 
             time.sleep(min(2.0 * consecutive_failures, 5.0))
-    raise RuntimeError("worker 停止前未能完成 reset")
+    return None

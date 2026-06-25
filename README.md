@@ -196,20 +196,6 @@ models/                模型实现
   models/ddqn/         DDQN、异步训练器和环境适配器
   models/ppo/          PPO 环境、模型构建和训练入口
 models_output/         模型、checkpoint 和训练曲线输出
-<<<<<<< HEAD
-ref/                   参考代码
-simenv/                仿真环境（纯 Python PVZ 模拟）
-simenv/pvz_sim/        仿真游戏引擎（实体、场景、网格、移动）
-tools/                 辅助工具
-utils/                 日志、绘图、坐标、伤害等通用工具
-train.py               统一训练入口
-train_sim_ddqn.py      仿真环境 DDQN 训练脚本
-train_args.py          命令行参数
-train_env.py           环境构建
-train_model.py         PPO 模型构建
-train_utils.py         训练准备、日志、checkpoint 和 metrics callback
-AGENTS.md              二次开发协作规则
-=======
 simenv/                仿真环境（纯 Python PVZ 模拟）
   simenv/pvz_sim/      仿真游戏引擎（实体、场景、网格、移动）
 tools/                 独立辅助工具
@@ -218,7 +204,6 @@ train.py               统一训练入口
 train_sim_ddqn.py      仿真环境 DDQN 训练脚本
 training/              训练生命周期、日志、checkpoint、metrics 和运行准备
 AGENTS.md              Agents 开发协作规则
->>>>>>> origin/main
 ```
 
 ## 训练框架

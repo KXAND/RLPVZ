@@ -470,6 +470,33 @@ class PVZInterface:
             all_waves.append(wave_zombies)
         
         return all_waves
+
+    def remove_zombie_types_from_spawn_list(self, zombie_types: set[int]) -> int:
+        """从当前关卡的出怪列表中移除指定僵尸类型。"""
+        if not self.reader or not self.writer:
+            return -1
+
+        board = self.reader.get_board()
+        if board == 0:
+            return -1
+
+        total_waves = self.reader.read_int(board + Offset.TOTAL_WAVE)
+        max_waves = min(max(0, total_waves), Offset.ZOMBIE_LIST_MAX_WAVES)
+        removed = 0
+
+        for wave in range(max_waves):
+            base = board + Offset.ZOMBIE_LIST + wave * Offset.ZOMBIE_LIST_WAVE_SIZE
+            for i in range(Offset.ZOMBIE_LIST_MAX_PER_WAVE):
+                addr = base + i * 4
+                zombie_type = self.reader.read_int(addr)
+                if zombie_type in zombie_types and self.writer.write_int(addr, -1):
+                    removed += 1
+
+        type_list_base = board + Offset.ZOMBIE_TYPE_LIST
+        for zombie_type in zombie_types:
+            self.writer.write_bool(type_list_base + int(zombie_type), False)
+
+        return removed
     
     def _read_lawnmowers(self, board: int) -> list:
         """Read all lawnmowers from memory"""

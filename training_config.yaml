@@ -331,7 +331,7 @@ training:
   args:
     algo: "ddqn"                # 默认算法: ppo 或 ddqn
     port: 12345
-    num_envs: 8
+    num_envs: 2
     base_port: 12345
     ports: ""
     pids: ""

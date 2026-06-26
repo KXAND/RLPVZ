@@ -115,6 +115,7 @@ class DDQNTrainingStats:
         if len(self.training_rewards) > self._MAX_EPISODE_HISTORY:
             self.training_rewards = self.training_rewards[-self._MAX_EPISODE_HISTORY:]
             self.training_iterations = self.training_iterations[-self._MAX_EPISODE_HISTORY:]
+            self.training_successes = self.training_successes[-self._MAX_EPISODE_HISTORY:]
 
         recent_rewards = self.training_rewards[-self.window :]
         recent_iterations = self.training_iterations[-self.window :]

@@ -158,9 +158,27 @@ observation_space:
 rewards:
   # 正向奖励 - 先保证局部行为有反馈，再让过波/通关成为主目标
   zombie_kill:
-    normal: 0.30
+    use_type_rewards: false     # false 时所有僵尸击杀都使用 default
+    default: 0.30
+    zombie: 0.30
+    flag: 0.30
     conehead: 0.45
+    polevaulter: 0.50
     buckethead: 0.70
+    newspaper: 0.40
+    screendoor: 0.60
+    football: 0.80
+    dancing: 0.50
+    backup: 0.30
+    duckytube: 0.30
+    snorkel: 0.45
+    bobsled: 0.45
+    dolphin: 0.55
+    jackinbox: 0.55
+    pogo: 0.55
+    yeti: 0.80
+    catapult: 0.75
+    imp: 0.30
 
   sun_collect: 0.01             # 收集阳光，给经济一点正反馈
   wave_complete: 4.0            # 完成一波，是最稳定的阶段性奖励

@@ -1234,10 +1234,9 @@ class PVZEnv(gym.Env):
         self.kill_heatmap *= 0.995
         
         if killed_zombies:
-            count = len(killed_zombies)
-            r_kill = count * self.rewards['zombie_kill'].get('normal', 0.3)
+            r_kill = sum(self._get_zombie_kill_reward(z) for z in killed_zombies)
             reward += r_kill
-            self.zombies_killed += count
+            self.zombies_killed += len(killed_zombies)
             details['kill'] = r_kill
         
         # 波次完成奖励
@@ -1346,6 +1345,21 @@ class PVZEnv(gym.Env):
         self.last_potential = potential
 
         return reward, details, potential
+
+    def _get_zombie_kill_reward(self, zombie) -> float:
+        """按配置计算单个僵尸击杀奖励，可选择统一分数或按类型分数。"""
+        kill_rewards = self.rewards.get('zombie_kill', {})
+        default_reward = float(kill_rewards.get('default', kill_rewards.get('normal', 0.3)))
+        if not kill_rewards.get('use_type_rewards', False):
+            return default_reward
+
+        try:
+            zombie_type = ZombieType(int(zombie.type))
+        except (AttributeError, ValueError):
+            return default_reward
+
+        reward_key = zombie_type.name.lower()
+        return float(kill_rewards.get(reward_key, default_reward))
 
     def _compute_reward(self, game_state) -> float:
         """兼容旧接口"""

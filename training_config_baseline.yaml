@@ -150,13 +150,27 @@ observation_space:
 rewards:
   # Zombie kill rewards (sparse signal — matches paper Table 5)
   zombie_kill:
-    normal: 0.2                 # Basic Zombie
+    use_type_rewards: true
+    default: 0.3                # Fallback for unlisted zombie types
+    zombie: 0.2                 # Basic Zombie
+    flag: 0.2
     conehead: 0.3               # Conehead Zombie
+    polevaulter: 0.5            # Pole Vaulter Zombie
     buckethead: 0.6             # Buckethead Zombie
-    pole_vaulter: 0.5           # Pole Vaulter Zombie
+    newspaper: 0.3
+    screendoor: 0.6
     football: 0.8               # Football Zombie
-    gargantuar: 2.0             # Gargantuar
-    default: 0.3                # Other zombie types
+    dancing: 0.5
+    backup: 0.2
+    duckytube: 0.2
+    snorkel: 0.4
+    bobsled: 0.4
+    dolphin: 0.5
+    jackinbox: 0.5
+    pogo: 0.5
+    yeti: 0.8
+    catapult: 0.7
+    imp: 0.2
 
   # Hardcoded reward components — explicitly zero for sparse baseline
   coverage:

@@ -1,4 +1,7 @@
 import queue
+import os
+
+import numpy as np
 
 from training.metrics import load_metric_events, load_training_snapshot
 from utils.train_utils import get_current_stage_name, load_training_config
@@ -73,6 +76,10 @@ class AsyncDDQNTrainer:
         self.context = context
         self.env_spec = env_spec
         self.scenario_spec = scenario_spec
+        self._snapshot_freq = max(
+            1, int(getattr(args, "ddqn_plot_freq", 20))
+        )  # rate-limit snapshot emission
+        self._last_snapshot_ep = 0
 
     def train(
         self,
@@ -125,7 +132,19 @@ class AsyncDDQNTrainer:
                     raise RuntimeError("所有 DDQN worker 都已退出，训练终止")
                 continue
 
-            self.buffer.append(*transition)
+            # Store contiguous copies to reduce memory fragmentation
+            (t_state, t_action, t_reward, t_done,
+             t_next_state, t_mask, t_next_mask) = transition
+            self.buffer.append(
+                np.ascontiguousarray(t_state),
+                t_action,
+                t_reward,
+                t_done,
+                np.ascontiguousarray(t_next_state),
+                np.ascontiguousarray(t_mask),
+                np.ascontiguousarray(t_next_mask),
+            )
+            del t_state, t_next_state, t_mask, t_next_mask, transition
             self.transition_count += 1
 
             if self.buffer.burn_in_capacity() < 1:
@@ -198,6 +217,27 @@ class AsyncDDQNTrainer:
                 self.solved = True
                 return
 
+            if self.stats.episode_count % 100 == 0:
+                import gc, os
+
+                gc.collect()
+                try:
+                    import torch, psutil
+
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    proc = psutil.Process(os.getpid())
+                    mem_mb = proc.memory_info().rss / 1024 / 1024
+                    buf_pct = len(self.buffer.replay_memory) / max(1, self.buffer.memory_size) * 100
+                    qsize = worker_pool.transition_queue.qsize()
+                    print(f"\n[MEM] main PID={os.getpid()} RSS={mem_mb:.0f}MB  "
+                          f"buffer={buf_pct:.0f}%  queue={qsize}  "
+                          f"ep={self.stats.episode_count}  "
+                          f"loss_cap={len(self.stats.training_loss)}",
+                          flush=True)
+                except Exception:
+                    pass
+
             if self.stats.should_evaluate(evaluate_frequency):
                 eval_stats = self.stats.record_eval(evaluate_n_iter)
                 self.metric_emitter.emit_eval(eval_stats, self.transition_count)
@@ -209,6 +249,10 @@ class AsyncDDQNTrainer:
                 self.reporter.print_eval(eval_stats, progress_line, stage_name)
 
     def _emit_training_metrics(self, force=False):
+        ep = self.stats.episode_count
+        if not force and ep - self._last_snapshot_ep < self._snapshot_freq:
+            return
+        self._last_snapshot_ep = ep
         self.metric_emitter.emit_snapshot(self.stats.to_snapshot(force=force))
 
     def _update_curriculum(self, worker_pool, message, episode_stats):

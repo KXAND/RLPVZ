@@ -76,6 +76,15 @@ _ZOMBIE_THREAT_PRIORITY = {
 
 _INACTIVE_ROW_CLEAR_INTERVAL_CS = 100
 _INACTIVE_ROW_CLEAR_COL = 0
+_FILTERED_SPAWN_ZOMBIE_TYPES = {
+    int(ZombieType.BALLOON),
+    int(ZombieType.DIGGER),
+    int(ZombieType.BUNGEE),
+    int(ZombieType.GARGANTUAR),
+    int(ZombieType.GIGA_GARGANTUAR),
+    int(ZombieType.LADDER),
+    int(ZombieType.ZOMBONI),
+}
 
 
 class PVZEnv(gym.Env):
@@ -559,7 +568,7 @@ class PVZEnv(gym.Env):
                 else:
                     self._emit(f"[PVZEnv] ERROR: 无法连接到 Hook DLL (port: {self.hook_port})!", console_level=1, log_level=1)
                     self._emit("[PVZEnv] 请确保 PVZ 游戏已启动并已注入 DLL。", console_level=1, log_level=1)
-                    self._emit("[PVZEnv] 训练时请使用 --no_auto_start 手动管理游戏进程，或检查 game_path 配置。", console_level=1, log_level=1)
+                    self._emit("[PVZEnv] 关闭 auto_start 时请手动管理游戏进程，或检查 game_path 配置。", console_level=1, log_level=1)
                     return False
         
         if self.pvz is None:
@@ -729,6 +738,17 @@ class PVZEnv(gym.Env):
         
         # 等待游戏开始
         self._require_ui(3, timeout=10.0, error_message="等待游戏开始超时")
+
+        if self.pvz:
+            removed_count = self.pvz.remove_zombie_types_from_spawn_list(
+                _FILTERED_SPAWN_ZOMBIE_TYPES
+            )
+            if removed_count > 0:
+                self._emit(
+                    f"[PVZEnv] 已从出怪列表移除 {removed_count} 个禁用僵尸槽位",
+                    console_level=1,
+                    log_level=1,
+                )
         
         # reset 时应用当前场景的初始阳光。
         if self.initial_sun != 50:
@@ -1214,10 +1234,9 @@ class PVZEnv(gym.Env):
         self.kill_heatmap *= 0.995
         
         if killed_zombies:
-            count = len(killed_zombies)
-            r_kill = count * self.rewards['zombie_kill'].get('normal', 0.3)
+            r_kill = sum(self._get_zombie_kill_reward(z) for z in killed_zombies)
             reward += r_kill
-            self.zombies_killed += count
+            self.zombies_killed += len(killed_zombies)
             details['kill'] = r_kill
         
         # 波次完成奖励
@@ -1326,6 +1345,21 @@ class PVZEnv(gym.Env):
         self.last_potential = potential
 
         return reward, details, potential
+
+    def _get_zombie_kill_reward(self, zombie) -> float:
+        """按配置计算单个僵尸击杀奖励，可选择统一分数或按类型分数。"""
+        kill_rewards = self.rewards.get('zombie_kill', {})
+        default_reward = float(kill_rewards.get('default', kill_rewards.get('normal', 0.3)))
+        if not kill_rewards.get('use_type_rewards', False):
+            return default_reward
+
+        try:
+            zombie_type = ZombieType(int(zombie.type))
+        except (AttributeError, ValueError):
+            return default_reward
+
+        reward_key = zombie_type.name.lower()
+        return float(kill_rewards.get(reward_key, default_reward))
 
     def _compute_reward(self, game_state) -> float:
         """兼容旧接口"""

@@ -383,6 +383,7 @@ training:
     ddqn_plot_path: null
     ddqn_save_path: null
     ddqn_load_path: null
+    ddqn_paper_observation: false
 
   env:
     max_steps: 10000            # 最大步数

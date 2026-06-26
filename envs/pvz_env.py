@@ -568,7 +568,7 @@ class PVZEnv(gym.Env):
                 else:
                     self._emit(f"[PVZEnv] ERROR: 无法连接到 Hook DLL (port: {self.hook_port})!", console_level=1, log_level=1)
                     self._emit("[PVZEnv] 请确保 PVZ 游戏已启动并已注入 DLL。", console_level=1, log_level=1)
-                    self._emit("[PVZEnv] 训练时请使用 --no_auto_start 手动管理游戏进程，或检查 game_path 配置。", console_level=1, log_level=1)
+                    self._emit("[PVZEnv] 关闭 auto_start 时请手动管理游戏进程，或检查 game_path 配置。", console_level=1, log_level=1)
                     return False
         
         if self.pvz is None:

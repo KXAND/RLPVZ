@@ -95,15 +95,15 @@ def _add_common_args(parser):
     )
     common.add_argument(
         "--auto_start",
-        dest="no_auto_start",
-        action="store_false",
+        dest="auto_start",
+        action="store_true",
         default=argparse.SUPPRESS,
         help="根据 --num_envs 自动启动对应数量的游戏进程并注入 DLL",
     )
     common.add_argument(
         "--no_auto_start",
-        dest="no_auto_start",
-        action="store_true",
+        dest="auto_start",
+        action="store_false",
         default=argparse.SUPPRESS,
         help="禁用自动启动 (需手动启动游戏进程和注入 DLL)",
     )
@@ -141,15 +141,15 @@ def _add_common_args(parser):
     )
     common.add_argument(
         "--auto_resume",
-        dest="no_auto_resume",
-        action="store_false",
+        dest="auto_resume",
+        action="store_true",
         default=argparse.SUPPRESS,
         help="自动加载最新模型继续训练",
     )
     common.add_argument(
         "--no_auto_resume",
-        dest="no_auto_resume",
-        action="store_true",
+        dest="auto_resume",
+        action="store_false",
         default=argparse.SUPPRESS,
         help="禁用自动加载，从零开始训练",
     )

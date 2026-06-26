@@ -153,8 +153,8 @@ CLI 显式输入 > training_config.yaml (或 --training_config 指定的文件)
 | `--base_port` | 多进程 Hook 起始端口 |
 | `--pids` | 显式指定 PVZ 进程 PID 列表（逗号分隔） |
 | `--ports` | 显式指定 Hook 端口列表（逗号分隔） |
-| `--no_auto_start` | 禁用自动启动和注入 |
-| `--no_auto_resume` | 禁用自动恢复模型 |
+| `--auto_start` / `--no_auto_start` | 启用或禁用自动启动和注入 |
+| `--auto_resume` / `--no_auto_resume` | 启用或禁用自动恢复模型 |
 | `--game_path` | 游戏 exe 路径 |
 | `--speed` | 游戏速度倍率（最高 100x） |
 | `--frameskip` | 帧跳过数 |

@@ -3,7 +3,7 @@ import queue
 import numpy as np
 
 from .threshold import Threshold
-from .ddqn import QNetwork, copy_state_dict_to_cpu
+from .ddqn import QNetwork
 from training.logging import setup_worker_logging
 from training.worker_pool import AsyncWorkerPool
 
@@ -69,9 +69,9 @@ class DDQNWorkerPool(AsyncWorkerPool):
             label="DDQN",
         )
 
-    def publish_weights(self, state_dict):
+    def publish_weights(self, state_dict, global_episode: int = 0):
         for weights_queue in self.weight_queues:
-            _put_latest_weights(weights_queue, state_dict)
+            _put_latest_weights(weights_queue, (state_dict, global_episode))
 
     def publish_scenario(self, scenario_spec):
         for scenario_queue in self.scenario_queues:
@@ -118,16 +118,16 @@ def _drain_latest_weights(weights_queue):
         try:
             latest = weights_queue.get_nowait()
         except queue.Empty:
-            return latest
+            return latest  # (state_dict, global_episode) or None
 
 
-def _put_latest_weights(weights_queue, state_dict):
+def _put_latest_weights(weights_queue, payload):
     while True:
         try:
             weights_queue.get_nowait()
         except queue.Empty:
             break
-    weights_queue.put(copy_state_dict_to_cpu(state_dict))
+    weights_queue.put(payload)
 
 
 def _consume_scenario_queue(
@@ -210,15 +210,17 @@ def ddqn_worker_main(
         episode_reward = 0.0
         local_episode = 0
 
+        global_episode = 0
         while not stop_event.is_set():
             _consume_scenario_queue(env, scenario_queue)
-            latest_state_dict = _drain_latest_weights(weights_queue)
-            if latest_state_dict is not None:
-                network.load_state_dict(latest_state_dict)
-                del latest_state_dict
+            latest_weights = _drain_latest_weights(weights_queue)
+            if latest_weights is not None:
+                state_dict, global_episode = latest_weights
+                network.load_state_dict(state_dict)
+                del state_dict, latest_weights
 
             mask = np.array(env.mask_available_actions(), dtype=bool)
-            epsilon = threshold.epsilon(local_episode)
+            epsilon = threshold.epsilon(global_episode)
             action = network.decide_action(state, mask, epsilon=epsilon)
 
             try:
@@ -256,10 +258,11 @@ def ddqn_worker_main(
                     )
                     break
                 except queue.Full:
-                    latest_state_dict = _drain_latest_weights(weights_queue)
-                    if latest_state_dict is not None:
-                        network.load_state_dict(latest_state_dict)
-                        del latest_state_dict
+                    latest_weights = _drain_latest_weights(weights_queue)
+                    if latest_weights is not None:
+                        state_dict, _ = latest_weights
+                        network.load_state_dict(state_dict)
+                        del state_dict, latest_weights
 
             state = next_state.copy()
             episode_reward += reward

@@ -144,7 +144,10 @@ class AsyncDDQNTrainer:
 
             if self.transition_count % network_sync_frequency == 0:
                 self.stats.record_sync()
-                worker_pool.publish_weights(self.learner.sync_target())
+                worker_pool.publish_weights(
+                    self.learner.sync_target(),
+                    global_episode=self.stats.episode_count,
+                )
 
         worker_pool.request_stop()
         self._drain_stats_queue(worker_pool, evaluate_frequency, evaluate_n_iter)

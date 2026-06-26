@@ -335,12 +335,12 @@ training:
     base_port: 12345
     ports: ""
     pids: ""
-    no_auto_start: false
+    auto_start: true
     game_path: "gameobj/PlantsVsZombies.exe"
     wait_time: 3.0
     speed: 10.0
     frameskip: 4
-    no_auto_resume: false
+    auto_resume: true
     env_console_log_level: 0
     file_log_level: 1
     execution: "auto"

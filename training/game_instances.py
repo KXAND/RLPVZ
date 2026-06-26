@@ -20,11 +20,11 @@ def prepare_game_instances(args):
     if instances is None:
         return None
 
-    if args.no_auto_start:
+    if not args.auto_start:
         pids = list_pvz_processes()
         print(f"[PVZ] 当前发现的所有进程 PID: {pids}")
         if any(i["pid"] is None for i in instances):
-            print("[警告] no_auto_start 模式下需要手动启动所有 PVZ 进程或使用 --pids")
+            print("[警告] auto_start 关闭时需要手动启动所有 PVZ 进程或使用 --pids")
         return instances
 
     # Auto-start: 先启动 PvZ Toolkit，再根据实例数自动启动游戏进程并注入 DLL
@@ -142,7 +142,7 @@ def _resolve_game_instances(args):
     """解析游戏实例列表 [(pid, port), ...]。
 
     auto_start 模式：未指定 --pids 时所有 pid 为 None（由后续启动流程填充）。
-    no_auto_start 模式：从当前运行的进程中发现。
+    auto_start 关闭时：从当前运行的进程中发现。
     """
     requested = max(1, int(getattr(args, "num_envs", 1)))
     explicit_pids = _parse_int_list(getattr(args, "pids", ""))
@@ -162,12 +162,12 @@ def _resolve_game_instances(args):
         base_port = int(getattr(args, "base_port", getattr(args, "port", 12345)))
         ports = [base_port + idx for idx in range(requested)]
 
-    no_auto = bool(getattr(args, "no_auto_start", False))
+    auto_start = bool(getattr(args, "auto_start", True))
 
     # 解析 PID
     if explicit_pids:
         pids = explicit_pids
-    elif no_auto:
+    elif not auto_start:
         # 手动模式：从当前运行的进程中获取
         discovered = list_pvz_processes()
         if len(discovered) < requested:

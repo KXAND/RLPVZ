@@ -98,7 +98,7 @@ def build_train_context(args, algorithm, device, game_instances, checkpoint, run
 
 
 def _restore_curriculum_state(args, run_paths, curriculum) -> None:
-    if getattr(args, "no_auto_resume", False):
+    if not getattr(args, "auto_resume", True):
         return
     if not hasattr(curriculum, "stages") or not hasattr(
         curriculum, "current_stage_index"

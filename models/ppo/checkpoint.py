@@ -42,7 +42,7 @@ def prepare_resume(args, run_paths=None):
         print(f"使用参数指定模型路径：{args.load}")
         return
 
-    if args.no_auto_resume:
+    if not args.auto_resume:
         print("自动恢复已禁用，从零开始训练")
         return
 

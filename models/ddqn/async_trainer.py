@@ -46,7 +46,7 @@ class AsyncDDQNTrainer:
         metric_window = max(1, int(config.get("metric_window", 100)))
         snapshot = None
         metric_events = []
-        if context is not None and not getattr(args, "no_auto_resume", False):
+        if context is not None and getattr(args, "auto_resume", True):
             snapshot = load_training_snapshot(context.run_paths.metrics_snapshot_path)
             metric_events = load_metric_events(context.run_paths.metrics_csv_path)
         self.stats = DDQNTrainingStats.from_history(

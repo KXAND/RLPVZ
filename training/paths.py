@@ -54,7 +54,7 @@ def build_run_paths(args) -> RunPaths:
 
 def _resolve_run_id(args, output_dir: str) -> str:
     if (
-        not getattr(args, "no_auto_resume", False)
+        getattr(args, "auto_resume", True)
         and os.path.exists(get_cached_model_path(args.algo))
     ):
         latest_run_id = _find_latest_run_id(output_dir)

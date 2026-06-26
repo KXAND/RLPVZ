@@ -207,7 +207,7 @@ curriculum:
         cols: 9
         enabled_rows: [0, 1, 2]
         enabled_plants: [0]
-        initial_sun: 300
+        initial_sun: 450
         win_condition: "level_end"
         target_sublevels: 1
         min_episodes: 30

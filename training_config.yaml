@@ -172,6 +172,9 @@ rewards:
   plant_sunflower: 0.10
   plant_attacker: 0.35
   plant_wall: 0.18
+  plant_lilypad: 0.4
+  plant_pumpkin: 0.1
+  plant_other: 0.3
 
   # 负向惩罚 - 失败要疼，但不能大到淹没全过程信号
   plant_lost: -0.25
@@ -179,6 +182,12 @@ rewards:
   lawnmower_triggered: -50.0
   game_lose: -12.0
   invalid_action: -0.01
+  wait_with_sun: -0.02        # 阳光充足时等待，弱惩罚纯等待
+
+  coverage:
+    scale: 0.0                # 显式关闭行覆盖即时奖励，避免和 potential 重复
+  proximity:
+    scale: 0.0                # 显式关闭近家僵尸即时惩罚，主要由 potential 处理威胁
 
   potential:
     sun_scale: 0.06
@@ -363,6 +372,7 @@ training:
     ddqn_batch_size: 200
     ddqn_buffer_size: 100000
     ddqn_burn_in: 10000
+    ddqn_hidden_sizes: [2048, 1024]
     ddqn_lr: 0.001
     ddqn_update_freq: 32
     ddqn_sync_freq: 2000

@@ -3,6 +3,7 @@ import os
 
 import numpy as np
 
+from training.metrics import load_metric_events, load_training_snapshot
 from utils.train_utils import get_current_stage_name, load_training_config
 
 from .ddqn import experienceReplayBuffer
@@ -42,11 +43,28 @@ class AsyncDDQNTrainer:
         self.batch_size = args.ddqn_batch_size
         self.reward_threshold = 30000
         config = load_training_config(getattr(args, "training_config", None))
-        self.stats = DDQNTrainingStats(
-            window=max(1, int(config.get("metric_window", 100)))
+        metric_window = max(1, int(config.get("metric_window", 100)))
+        snapshot = None
+        metric_events = []
+        if context is not None and getattr(args, "auto_resume", True):
+            snapshot = load_training_snapshot(context.run_paths.metrics_snapshot_path)
+            metric_events = load_metric_events(context.run_paths.metrics_csv_path)
+        self.stats = DDQNTrainingStats.from_history(
+            window=metric_window,
+            snapshot=snapshot,
+            events=metric_events,
         )
 
-        self.transition_count = 0
+        self.transition_count = max(
+            (event.step or 0 for event in metric_events),
+            default=0,
+        )
+        if self.stats.episode_count > 0:
+            print(
+                f"[DDQN] 从 run 记录恢复: episodes={self.stats.episode_count}, "
+                f"steps={self.transition_count}",
+                flush=True,
+            )
         self.solved = False
         self.worker_status = DDQNWorkerStatus(worker_count=len(instances))
         self.checkpoint_freq = max(0, int(getattr(args, "ddqn_checkpoint_freq", 0)))
@@ -196,7 +214,7 @@ class AsyncDDQNTrainer:
             self._emit_training_metrics()
 
             progress_line = episode_stats.progress_line
-            self.reporter.print_progress(episode_stats)
+            self.reporter.print_progress(episode_stats, message["worker_id"])
 
             if episode_stats.mean_reward >= self.reward_threshold:
                 self.solved = True

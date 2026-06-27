@@ -65,6 +65,43 @@ class DDQNTrainingStats:
         self.eval_episodes = []
         self.sync_eps = []
 
+    @classmethod
+    def from_history(cls, window: int, snapshot=None, events=None):
+        stats = cls(window=window)
+        events = events or []
+        episodes = {}
+        for event in events:
+            if event.source != "ddqn" or event.episode is None:
+                continue
+            item = episodes.setdefault(int(event.episode), {})
+            if event.name == "episode_reward":
+                item["reward"] = float(event.value)
+            elif event.name == "episode_iterations":
+                item["iterations"] = float(event.value)
+            elif event.name == "episode_success":
+                item["success"] = bool(event.value)
+
+        for episode in sorted(episodes):
+            item = episodes[episode]
+            if {"reward", "iterations", "success"} <= item.keys():
+                stats.record_episode(
+                    item["reward"],
+                    item["iterations"],
+                    item["success"],
+                )
+
+        if snapshot is not None:
+            stats.training_loss = list(snapshot.losses)
+            stats.real_rewards = list(snapshot.eval_rewards)
+            stats.eval_episodes = list(snapshot.eval_steps)
+            if not stats.training_rewards:
+                stats.episode_count = int(snapshot.episode_count)
+                stats.training_rewards = list(snapshot.episode_rewards)
+                stats.mean_training_rewards = list(snapshot.mean_rewards)
+                stats.mean_training_iterations = list(snapshot.mean_iterations)
+
+        return stats
+
     def record_episode(self, reward, iterations, success) -> EpisodeStats:
         self.episode_count += 1
         reward = float(reward)
@@ -78,6 +115,7 @@ class DDQNTrainingStats:
         if len(self.training_rewards) > self._MAX_EPISODE_HISTORY:
             self.training_rewards = self.training_rewards[-self._MAX_EPISODE_HISTORY:]
             self.training_iterations = self.training_iterations[-self._MAX_EPISODE_HISTORY:]
+            self.training_successes = self.training_successes[-self._MAX_EPISODE_HISTORY:]
 
         recent_rewards = self.training_rewards[-self.window :]
         recent_iterations = self.training_iterations[-self.window :]
@@ -241,8 +279,9 @@ class DDQNMetricEmitter:
 
 
 class DDQNConsoleReporter:
-    def print_progress(self, episode_stats):
-        print(episode_stats.progress_line, flush=True)
+    def print_progress(self, episode_stats, worker_id=None):
+        worker_text = f"Worker: {worker_id} " if worker_id is not None else ""
+        print(f"{worker_text}{episode_stats.progress_line}", flush=True)
 
     def print_eval(self, eval_stats, progress_line, stage_name=""):
         stage_text = f" | stage={stage_name}" if stage_name else ""

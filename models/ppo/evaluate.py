@@ -106,6 +106,14 @@ def evaluate_ppo_model(
                     },
                 )
             )
+            print(
+                f"[Eval][PPO] episode {len(details)}/{episodes} | "
+                f"reward={details[-1].reward:.2f} | "
+                f"survival={details[-1].survival:.0f} | "
+                f"win={details[-1].win} | "
+                f"actions={details[-1].actions}",
+                flush=True,
+            )
             episode_rewards[env_index] = 0.0
             episode_actions[env_index] = 0
             if len(details) >= episodes:

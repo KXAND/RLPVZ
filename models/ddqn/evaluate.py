@@ -173,6 +173,14 @@ def _evaluate_with_envs(
                 },
             )
         )
+        print(
+            f"[Eval][DDQN] episode {index + 1}/{episodes} | "
+            f"reward={total_reward:.2f} | "
+            f"survival={details[-1].survival:.0f} | "
+            f"win={details[-1].win} | "
+            f"actions={actions}",
+            flush=True,
+        )
 
     return summarize_eval_results(
         eval_id=eval_id,

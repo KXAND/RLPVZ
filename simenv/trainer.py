@@ -38,6 +38,8 @@ def train_sim(
     save_path="saved/sim_ddqn.pt",
     eval_episodes=100,
     visualize=False,
+    plot_freq=100,
+    plot_callback=None,
 ):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     env = SimPVZEnv()
@@ -146,6 +148,15 @@ def train_sim(
                           f"Steps {step_count:7d}  "
                           f"Mean R {mean_r:8.2f}  Mean I {mean_i:.2f}  Mean L {mean_l:.2f}")
 
+                if plot_freq and ep % plot_freq == 0:
+                    _save_training_artifacts(
+                        save_path,
+                        training_rewards,
+                        training_iterations,
+                        training_loss,
+                        plot_callback=plot_callback,
+                    )
+
                 if ep >= max_episodes:
                     print(f"\nEpisode limit reached ({max_episodes} episodes, {step_count} steps).")
                     break
@@ -155,9 +166,13 @@ def train_sim(
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     torch.save(network.state_dict(), save_path)
     print(f"Saved model to {save_path}")
-    np.save(save_path.replace(".pt", "_rewards.npy"), np.array(training_rewards))
-    np.save(save_path.replace(".pt", "_iterations.npy"), np.array(training_iterations))
-    np.save(save_path.replace(".pt", "_loss.npy"), np.array(training_loss))
+    _save_training_artifacts(
+        save_path,
+        training_rewards,
+        training_iterations,
+        training_loss,
+        plot_callback=plot_callback,
+    )
     print("Training complete.")
 
     if eval_episodes > 0:
@@ -194,6 +209,23 @@ def _print_config(**cfg):
     print(f"  {'Max frames:':24s} {ec['max_frames']} ({ec['max_frames'] // ec['fps']}s game time)")
     print(f"  {'Plant deck:':24s} {', '.join(ec['plants'])}")
     print(f"{sep}\n")
+
+
+def _save_training_artifacts(
+    save_path,
+    training_rewards,
+    training_iterations,
+    training_loss,
+    plot_callback=None,
+):
+    rewards = np.array(training_rewards)
+    iterations = np.array(training_iterations)
+    loss = np.array(training_loss)
+    np.save(save_path.replace(".pt", "_rewards.npy"), rewards)
+    np.save(save_path.replace(".pt", "_iterations.npy"), iterations)
+    np.save(save_path.replace(".pt", "_loss.npy"), loss)
+    if plot_callback is not None:
+        plot_callback(save_path, rewards, iterations, loss)
 
 
 def _evaluate(env, network, n_episodes=100):

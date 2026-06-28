@@ -22,6 +22,8 @@ class WaveZombieSpawner(ZombieSpawner):
         )
         self.p = ZOMBIE_SPAWN["base_advanced_probability"]
         self.wave_index = 0
+        self.completed_sublevels = 0
+        self.last_wave_was_flag = False
 
     def spawn(self, scene):
         if self._timer <= 0 and self._wave_timer > 0:
@@ -39,7 +41,13 @@ class WaveZombieSpawner(ZombieSpawner):
                 self._timer -= 1
                 self._wave_timer -= 1
             else:
-                scene.add_zombie(Zombie_flag(0))
+                self.last_wave_was_flag = (
+                    self.wave_index % ZOMBIE_SPAWN["flag_wave_modulo"]
+                    == ZOMBIE_SPAWN["flag_wave_remainder"]
+                )
+                if self.last_wave_was_flag:
+                    scene.add_zombie(Zombie_flag(0))
+                    self.completed_sublevels += 1
                 for lane in range(config.N_LANES):
                     s = random.random()
                     if s < self.p:

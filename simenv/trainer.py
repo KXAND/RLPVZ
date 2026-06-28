@@ -316,6 +316,7 @@ def _evaluate(network, n_episodes=20, episode=None, step=None):
         done = False
         total_reward = 0.0
         steps = 0
+        info = {}
         while not done:
             mask = eval_env.mask_available_actions()
             with torch.no_grad():
@@ -324,7 +325,7 @@ def _evaluate(network, n_episodes=20, episode=None, step=None):
             qvals = qvals.clone()
             qvals[~mask_t] = qvals.min()
             action = torch.max(qvals, dim=-1)[1].item()
-            state, reward, done, _ = eval_env.step(action)
+            state, reward, done, info = eval_env.step(action)
             state = transform_observation(state)
             total_reward += reward
             steps += 1
@@ -338,10 +339,13 @@ def _evaluate(network, n_episodes=20, episode=None, step=None):
                 survival=float(survival),
                 win=survival >= max_frames,
                 game_ended=True,
+                completed_sublevels=info.get("completed_sublevels"),
                 actions=steps,
                 extra={
                     "max_frames": max_frames,
                     "fps": config.FPS,
+                    "current_wave_index": info.get("current_wave_index"),
+                    "is_flag_wave": info.get("is_flag_wave"),
                 },
             )
         )

@@ -469,12 +469,16 @@ class SimPVZEnv:
 
     def _build_info(self, episode_over, reward_details):
         current_wave = self._current_wave_index()
+        spawner = self._scene._zombie_spawner
         return {
             "steps": min(config.MAX_FRAMES, self._scene._chrono),
             "win": bool(episode_over and self._scene.lives > 0),
             "game_ended": bool(episode_over),
-            "completed_sublevels": 0,
+            "completed_sublevels": int(
+                getattr(spawner, "completed_sublevels", 0)
+            ),
             "current_wave_index": current_wave,
+            "is_flag_wave": bool(getattr(spawner, "last_wave_was_flag", False)),
             "zombie_count": len(self._scene.zombies),
             "plant_count": len(self._scene.plants),
             "sun": self._scene.sun,

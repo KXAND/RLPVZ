@@ -20,6 +20,8 @@ ZOMBIE_SPAWN = {
     "first_wave_delay_multiplier": 10,
     "wave_interval_multiplier": 20,
     "post_wave_spawn_delay_multiplier": 10,
+    "flag_wave_modulo": 10,
+    "flag_wave_remainder": 9,
     "base_advanced_probability": 0.05,
     "advanced_probability_growth": 2.0,
     "max_advanced_probability": 1.0,

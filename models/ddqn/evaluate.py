@@ -64,7 +64,64 @@ def evaluate_ddqn(
             env.close()
 
 
-def _evaluate_with_env(network, env, model_path, scenario_spec, episodes):
+def evaluate_ddqn_state_dict(
+    args,
+    state_dict,
+    instances,
+    env_spec,
+    scenario_spec,
+    episodes,
+    episode=None,
+    step=None,
+):
+    if not instances:
+        raise ValueError("DDQN eval requires at least one game instance")
+
+    env = None
+    try:
+        env = build_ddqn_env(
+            args,
+            instances[0],
+            worker_id="eval",
+            env_spec=env_spec,
+            scenario_spec=scenario_spec,
+        )
+        hidden_sizes = _parse_hidden_sizes(getattr(args, "ddqn_hidden_sizes", None))
+        network = QNetwork(
+            env,
+            learning_rate=args.ddqn_lr,
+            device="cpu",
+            hidden_sizes=hidden_sizes,
+            n_inputs_override=typed_onehot_state_dim(
+                env.rows, env.cols, env.num_cards
+            ),
+            create_optimizer=False,
+        )
+        network.load_state_dict(state_dict)
+        network.eval()
+        return _evaluate_with_env(
+            network,
+            env,
+            model_path=None,
+            scenario_spec=scenario_spec,
+            episodes=episodes,
+            episode=episode,
+            step=step,
+        )
+    finally:
+        if env is not None and hasattr(env, "close"):
+            env.close()
+
+
+def _evaluate_with_env(
+    network,
+    env,
+    model_path,
+    scenario_spec,
+    episodes,
+    episode=None,
+    step=None,
+):
     eval_id = new_eval_id("real_ddqn")
     start_time = time_eval_run()
     details = []
@@ -107,8 +164,8 @@ def _evaluate_with_env(network, env, model_path, scenario_spec, episodes):
         eval_id=eval_id,
         algo="ddqn",
         env_kind="real",
-        episode=None,
-        step=None,
+        episode=episode,
+        step=step,
         stage_name="base",
         win_condition=scenario_spec.win_condition,
         target_sublevels=scenario_spec.target_sublevels,

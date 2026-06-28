@@ -3,9 +3,11 @@ import os
 
 import numpy as np
 
+from training.evaluation import EvaluationScheduler
 from training.metrics import load_metric_events, load_training_snapshot
 from utils.train_utils import get_current_stage_name, load_training_config
 
+from .evaluate import evaluate_ddqn_state_dict
 from .ddqn import experienceReplayBuffer
 from .learner import DDQNLearner
 from .monitoring import (
@@ -109,6 +111,11 @@ class AsyncDDQNTrainer:
         self.context = context
         self.env_spec = env_spec
         self.scenario_spec = scenario_spec
+        self.eval_scheduler = (
+            EvaluationScheduler(context.eval_config)
+            if context is not None
+            else None
+        )
         self._snapshot_freq = max(
             1, int(getattr(args, "ddqn_plot_freq", 20))
         )  # rate-limit snapshot emission
@@ -286,15 +293,11 @@ class AsyncDDQNTrainer:
                 except Exception:
                     pass
 
-            if self.stats.should_evaluate(evaluate_frequency):
-                eval_stats = self.stats.record_eval(evaluate_n_iter)
-                self.metric_emitter.emit_eval(eval_stats, self.transition_count)
-                stage_name = (
-                    get_current_stage_name(self.context.curriculum)
-                    if self.context is not None
-                    else ""
-                )
-                self.reporter.print_eval(eval_stats, progress_line, stage_name)
+            if (
+                self.eval_scheduler is not None
+                and self.eval_scheduler.should_run(self.stats.episode_count)
+            ):
+                self._run_strict_eval()
 
     def _emit_training_metrics(self, force=False):
         ep = self.stats.episode_count
@@ -318,3 +321,26 @@ class AsyncDDQNTrainer:
             worker_pool.publish_scenario(scenario)
         else:
             worker_pool.acknowledge_episode(int(message["worker_id"]))
+
+    def _run_strict_eval(self):
+        if self.context is None or not self.context.eval_game_instances:
+            return
+        stage_name = get_current_stage_name(self.context.curriculum)
+        try:
+            eval_result = evaluate_ddqn_state_dict(
+                args=self.args,
+                state_dict=self.learner.state_dict_cpu(),
+                instances=self.context.eval_game_instances,
+                env_spec=self.context.env_spec,
+                scenario_spec=self.context.scenario_spec,
+                episodes=self.context.eval_config.episodes,
+                episode=self.stats.episode_count,
+                step=self.transition_count,
+            )
+            self.context.evaluation_writer.write(eval_result)
+            self.metric_emitter.emit_strict_eval(
+                eval_result, self.transition_count
+            )
+            self.reporter.print_strict_eval(eval_result, stage_name)
+        except Exception as exc:
+            print(f"\n[Eval] strict eval failed: {exc}", flush=True)

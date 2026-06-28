@@ -272,6 +272,26 @@ class DDQNMetricEmitter:
             episode=eval_stats.episode,
         )
 
+    def emit_strict_eval(self, eval_result, transition_count):
+        self.emit(
+            name="eval_reward_mean",
+            value=eval_result.reward_mean,
+            step=transition_count,
+            episode=eval_result.episode,
+        )
+        self.emit(
+            name="eval_survival_mean",
+            value=eval_result.survival_mean,
+            step=transition_count,
+            episode=eval_result.episode,
+        )
+        self.emit(
+            name="eval_win_rate",
+            value=eval_result.win_rate,
+            step=transition_count,
+            episode=eval_result.episode,
+        )
+
     def emit_snapshot(self, snapshot):
         if self.metrics is not None:
             self.metrics.emit_snapshot(snapshot)
@@ -309,6 +329,16 @@ class DDQNConsoleReporter:
     def print_checkpoint(self, episode_count):
         print(
             f"\n[DDQN] 已保存周期 checkpoint: episode {episode_count}",
+            flush=True,
+        )
+
+    def print_strict_eval(self, eval_result, stage_name=""):
+        stage_text = f" | stage={stage_name}" if stage_name else ""
+        print(
+            f"\n[Eval] Episode {eval_result.episode}{stage_text} | "
+            f"reward={eval_result.reward_mean:.2f} | "
+            f"survival={eval_result.survival_mean:.2f} | "
+            f"win_rate={eval_result.win_rate:.2%}",
             flush=True,
         )
 

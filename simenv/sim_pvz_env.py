@@ -119,9 +119,24 @@ class SimPVZEnv:
             return mask
         grid_indices = empty_cells[0] * self.cols + empty_cells[1]
         for plant in available_plants:
-            idx = self._plant_no[plant.__name__] * self.grid_size + grid_indices
-            mask[idx] = True
+            card_idx = self._plant_no[plant.__name__]
+            for row, col in zip(empty_cells[0], empty_cells[1]):
+                mask[self.action_index(card_idx, row, col)] = True
         return mask
+
+    def action_index(self, card_idx, row, col):
+        return int(card_idx * self.grid_size + row * self.cols + col)
+
+    def decode_action(self, action):
+        if action == self.wait_action:
+            return None
+        if action < 0 or action >= self.wait_action:
+            return None
+        card_idx = action // self.grid_size
+        grid_idx = action % self.grid_size
+        row = grid_idx // self.cols
+        col = grid_idx % self.cols
+        return int(card_idx), int(row), int(col)
 
     def close(self):
         pass
@@ -161,17 +176,13 @@ class SimPVZEnv:
              action_avail.astype(int)]).astype(np.int64)
 
     def _take_action(self, action):
-        if action == self.wait_action:
+        decoded = self.decode_action(action)
+        if decoded is None:
             return
-        if action < 0 or action >= self.wait_action:
-            return
-        plant_idx = action // self.grid_size
-        grid_idx = action % self.grid_size
+        plant_idx, lane, pos = decoded
         plant_name = self._plant_names[plant_idx]
         if plant_name not in self.plant_deck:
             return
-        lane = grid_idx // self.cols
-        pos = grid_idx % self.cols
         move = Move(plant_name, lane, pos)
         if move.is_valid(self._scene):
             move.apply_move(self._scene)

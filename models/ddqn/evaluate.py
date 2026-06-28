@@ -29,39 +29,27 @@ def evaluate_ddqn(
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"DDQN model not found: {model_path}")
 
-    env = None
+    envs = []
     try:
-        env = build_ddqn_env(
+        envs = _build_eval_envs(
             args,
-            instances[0],
-            worker_id="eval",
-            env_spec=env_spec,
-            scenario_spec=scenario_spec,
+            instances,
+            env_spec,
+            scenario_spec,
         )
-        hidden_sizes = _parse_hidden_sizes(getattr(args, "ddqn_hidden_sizes", None))
-        network = QNetwork(
-            env,
-            learning_rate=args.ddqn_lr,
-            device="cpu",
-            hidden_sizes=hidden_sizes,
-            n_inputs_override=typed_onehot_state_dim(
-                env.rows, env.cols, env.num_cards
-            ),
-            create_optimizer=False,
-        )
+        network = _build_network(args, envs[0])
         state_dict = torch.load(model_path, map_location="cpu", weights_only=True)
         network.load_state_dict(state_dict)
         network.eval()
-        return _evaluate_with_env(
+        return _evaluate_with_envs(
             network,
-            env,
+            envs,
             model_path=model_path,
             scenario_spec=scenario_spec,
             episodes=episodes,
         )
     finally:
-        if env is not None and hasattr(env, "close"):
-            env.close()
+        _close_envs(envs)
 
 
 def evaluate_ddqn_state_dict(
@@ -78,31 +66,20 @@ def evaluate_ddqn_state_dict(
     if not instances:
         raise ValueError("DDQN eval requires at least one game instance")
 
-    env = None
+    envs = []
     try:
-        env = build_ddqn_env(
+        envs = _build_eval_envs(
             args,
-            instances[0],
-            worker_id="eval",
-            env_spec=env_spec,
-            scenario_spec=scenario_spec,
+            instances,
+            env_spec,
+            scenario_spec,
         )
-        hidden_sizes = _parse_hidden_sizes(getattr(args, "ddqn_hidden_sizes", None))
-        network = QNetwork(
-            env,
-            learning_rate=args.ddqn_lr,
-            device="cpu",
-            hidden_sizes=hidden_sizes,
-            n_inputs_override=typed_onehot_state_dim(
-                env.rows, env.cols, env.num_cards
-            ),
-            create_optimizer=False,
-        )
+        network = _build_network(args, envs[0])
         network.load_state_dict(state_dict)
         network.eval()
-        return _evaluate_with_env(
+        return _evaluate_with_envs(
             network,
-            env,
+            envs,
             model_path=None,
             scenario_spec=scenario_spec,
             episodes=episodes,
@@ -111,13 +88,46 @@ def evaluate_ddqn_state_dict(
             stage_name=stage_name,
         )
     finally:
-        if env is not None and hasattr(env, "close"):
+        _close_envs(envs)
+
+
+def _build_eval_envs(args, instances, env_spec, scenario_spec):
+    return [
+        build_ddqn_env(
+            args,
+            instance,
+            worker_id=f"eval-{index}",
+            env_spec=env_spec,
+            scenario_spec=scenario_spec,
+        )
+        for index, instance in enumerate(instances)
+    ]
+
+
+def _build_network(args, env):
+    hidden_sizes = _parse_hidden_sizes(getattr(args, "ddqn_hidden_sizes", None))
+    network = QNetwork(
+        env,
+        learning_rate=args.ddqn_lr,
+        device="cpu",
+        hidden_sizes=hidden_sizes,
+        n_inputs_override=typed_onehot_state_dim(
+            env.rows, env.cols, env.num_cards
+        ),
+        create_optimizer=False,
+    )
+    return network
+
+
+def _close_envs(envs):
+    for env in envs:
+        if hasattr(env, "close"):
             env.close()
 
 
-def _evaluate_with_env(
+def _evaluate_with_envs(
     network,
-    env,
+    envs,
     model_path,
     scenario_spec,
     episodes,
@@ -130,6 +140,7 @@ def _evaluate_with_env(
     details = []
 
     for index in range(episodes):
+        env = envs[index % len(envs)]
         state = env.reset()
         done = False
         total_reward = 0.0

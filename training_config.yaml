@@ -363,6 +363,15 @@ training:
     file_log_level: 1
     execution: "auto"
     curriculum: "stage_gate"
+
+  eval:
+    enabled: true
+    freq_episodes: 500
+    episodes: 20
+    deterministic: true
+    save_episode_details: true
+    real_num_envs: 1
+    real_base_port: 13000
   
   ppo:
     timesteps: 500000

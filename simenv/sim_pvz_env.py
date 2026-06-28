@@ -5,9 +5,8 @@ from simenv.pvz_sim import (
     Sunflower, Peashooter, Wallnut, Potatomine,
 )
 
-MAX_ZOMBIE_HP = 10000
-MAX_SUN = 10000
-SUN_NORM = 200.0
+MAX_SUN = 9999.0
+ZOMBIE_HP_NORM = 3000.0
 
 
 CARD_SPECS = (
@@ -47,6 +46,13 @@ class SimPVZEnv:
         self.num_cards = len(self.card_specs)  # 10
         self.grid_size = self.rows * self.cols  # 45
         self.wait_action = self.num_cards * self.grid_size
+        self.state_dim = (
+            1
+            + self.num_cards
+            + self.grid_size * (self.num_cards + 1)
+            + self.grid_size
+            + self.grid_size
+        )
 
         self.action_space = Discrete(self.wait_action + 1)  # 451
         self.action_space.n = self.action_space.n  # handy attribute
@@ -142,38 +148,45 @@ class SimPVZEnv:
         pass
 
     def _build_state(self):
-        """Raw state vector matching original PVZEnv_V2._get_obs().
+        empty_unknown_class = self.num_cards
+        plant_onehot = np.zeros(
+            (self.grid_size, self.num_cards + 1), dtype=np.float32)
+        plant_onehot[:, empty_unknown_class] = 1.0
+        plant_hp = np.zeros(self.grid_size, dtype=np.float32)
+        zombie_hp = np.zeros(self.grid_size, dtype=np.float32)
 
-        Returns int64[95]:
-          [0:45]   plant_grid   — categorical 0=empty, 1=SF, 2=Pea, 3=Wall, 4=Mine
-          [45:90]  zombie_grid  — raw zombie HP sum per cell
-          [90]     sun          — raw sun (capped at MAX_SUN)
-          [91:95]  action_avail — 0/1 mask per card
-        """
-        plant_grid = np.zeros(self.grid_size, dtype=int)
-        zombie_grid = np.zeros(self.grid_size, dtype=int)
         for plant in self._scene.plants:
             idx = plant.lane * self.cols + plant.pos
-            plant_grid[idx] = self._plant_no[plant.__class__.__name__] + 1
+            cls_idx = self._plant_no.get(plant.__class__.__name__, empty_unknown_class)
+            plant_onehot[idx, :] = 0.0
+            plant_onehot[idx, cls_idx] = 1.0
+            max_hp = max(1.0, float(getattr(plant, "MAX_HP", 1)))
+            plant_hp[idx] = max(0.0, min(1.0, float(plant.hp) / max_hp))
+
         for zombie in self._scene.zombies:
             idx = zombie.lane * self.cols + zombie.pos
-            zombie_grid[idx] += int(zombie.hp)
+            zombie_hp[idx] = min(
+                1.0, zombie_hp[idx] + float(zombie.hp) / ZOMBIE_HP_NORM)
 
-        action_avail = np.array([
-            name in self.plant_deck
-            and self._scene.plant_cooldowns[name] <= 0
-            for name in self._plant_names
-        ], dtype=bool)
-        action_avail *= np.array([
-            name in self.plant_deck
-            and self._scene.sun >= self.plant_deck[name].COST
-            for name in self._plant_names
-        ], dtype=bool)
+        cooldowns = np.ones(self.num_cards, dtype=np.float32)
+        for i, name in enumerate(self._plant_names):
+            if name not in self.plant_deck:
+                continue
+            plant_cls = self.plant_deck[name]
+            full_cd = max(1.0, float(plant_cls.COOLDOWN * config.FPS - 1))
+            cooldowns[i] = max(
+                0.0, min(1.0, self._scene.plant_cooldowns[name] / full_cd))
 
         return np.concatenate(
-            [plant_grid, zombie_grid,
-             np.array([min(self._scene.sun, MAX_SUN)], dtype=int),
-             action_avail.astype(int)]).astype(np.int64)
+            [
+                np.array([min(float(self._scene.sun), MAX_SUN) / MAX_SUN],
+                         dtype=np.float32),
+                cooldowns,
+                plant_onehot.reshape(-1),
+                plant_hp,
+                zombie_hp,
+            ]
+        ).astype(np.float32)
 
     def _take_action(self, action):
         decoded = self.decode_action(action)

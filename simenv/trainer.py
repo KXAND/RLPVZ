@@ -9,10 +9,21 @@ from copy import deepcopy
 from simenv import SimPVZEnv
 from simenv.pvz_sim import config
 from simenv.model import (
-    ReplayBuffer, SimQNetwork, SimDeepMLPNetwork, SimCNNQNetwork,
-    transform_observation, calculate_loss,
+    ReplayBuffer, DDQNNetwork, transform_observation, calculate_loss,
 )
-from models.ddqn.threshold import Threshold
+
+
+class EpsilonSchedule:
+    def __init__(self, seq_length, start_epsilon=1.0, end_epsilon=0.05):
+        self.seq_length = max(1, int(seq_length))
+        self.start_epsilon = float(start_epsilon)
+        self.end_epsilon = float(end_epsilon)
+
+    def epsilon(self, index):
+        ratio = min(1.0, max(0.0, index / self.seq_length))
+        return self.end_epsilon + (
+            self.start_epsilon - self.end_epsilon
+        ) * np.exp(-5.0 * ratio)
 
 
 def train_sim(
@@ -25,31 +36,23 @@ def train_sim(
     network_update_freq=32,
     network_sync_freq=2000,
     save_path="saved/sim_ddqn.pt",
-    network_type="cnn",
     eval_episodes=100,
+    visualize=False,
 ):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     env = SimPVZEnv()
-    if network_type == "cnn":
-        network = SimCNNQNetwork(env, learning_rate=lr, device=device)
-    elif network_type == "deepmlp":
-        network = SimDeepMLPNetwork(env, learning_rate=lr, device=device)
-    else:
-        network = SimQNetwork(env, learning_rate=lr, device=device,
-                              use_zombienet=False, use_gridnet=False)
+    network = DDQNNetwork(env, learning_rate=lr, device=device)
     target_network = deepcopy(network)
     buffer = ReplayBuffer(memory_size=buffer_size, burn_in=burn_in)
-    threshold = Threshold(
+    threshold = EpsilonSchedule(
         seq_length=max_episodes,
         start_epsilon=1.0,
-        interpolation="exponential",
         end_epsilon=0.05,
     )
 
-    # ── Print training configuration ──
     _print_config(
         device=device,
-        network_type=network_type,
+        network_type="ddqn",
         network_params=sum(p.numel() for p in network.parameters()),
         max_episodes=max_episodes,
         buffer_size=buffer_size,
@@ -60,7 +63,7 @@ def train_sim(
         network_update_freq=network_update_freq,
         network_sync_freq=network_sync_freq,
         eval_episodes=eval_episodes,
-        epsilon_decay=f"{threshold.start_epsilon} -> {threshold.end_epsilon} ({threshold.interpolation})",
+        epsilon_decay=f"{threshold.start_epsilon} -> {threshold.end_epsilon} (exponential)",
         env_config={
             "rows": config.N_LANES,
             "cols": config.LANE_LENGTH,
@@ -77,18 +80,18 @@ def train_sim(
     step_count = 0
     window = 100
 
-    # ── Burn-in ──
     print(f"Burn-in ({burn_in} steps)...")
     s_0 = transform_observation(env.reset())
     while buffer.burn_in_capacity() < 1:
         mask = np.array(env.mask_available_actions())
         if np.random.random() < 0.5:
-            action = 0
+            action = env.wait_action
         else:
             action = np.random.choice(np.arange(env.action_space.n)[mask])
         s_1, reward, done, _ = env.step(action)
         s_1 = transform_observation(s_1)
-        buffer.append(s_0, action, reward, done, s_1)
+        next_mask = np.array(env.mask_available_actions())
+        buffer.append(s_0, action, reward, done, s_1, mask, next_mask)
         s_0 = s_1.copy()
         if done:
             s_0 = transform_observation(env.reset())
@@ -96,7 +99,6 @@ def train_sim(
     print(f"Burn-in done. Buffer: {len(buffer.replay_memory)}  "
           f"(steps so far: {step_count})")
 
-    # ── Training loop ──
     ep = 0
     s_0 = transform_observation(env.reset())
     print(f"Training {max_episodes} episodes...")
@@ -110,8 +112,9 @@ def train_sim(
             action = network.decide_action(s_0, mask, epsilon=epsilon)
             s_1, r, done, _ = env.step(action)
             s_1 = transform_observation(s_1)
+            next_mask = np.array(env.mask_available_actions())
             rewards += r
-            buffer.append(s_0, action, r, done, s_1)
+            buffer.append(s_0, action, r, done, s_1, mask, next_mask)
             s_0 = s_1.copy()
             step_count += 1
 
@@ -149,7 +152,6 @@ def train_sim(
 
                 s_0 = transform_observation(env.reset())
 
-    # ── Save ──
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     torch.save(network.state_dict(), save_path)
     print(f"Saved model to {save_path}")
@@ -158,10 +160,11 @@ def train_sim(
     np.save(save_path.replace(".pt", "_loss.npy"), np.array(training_loss))
     print("Training complete.")
 
-    # ── Evaluation ──
-    _evaluate(env, network, n_episodes=eval_episodes)
+    if eval_episodes > 0:
+        _evaluate(env, network, n_episodes=eval_episodes)
 
-    _visualize_episode(env, network)
+    if visualize:
+        _visualize_episode(env, network)
 
 
 def _print_config(**cfg):
@@ -231,7 +234,6 @@ def _evaluate(env, network, n_episodes=100):
     survivals = np.array(survivals)
     actions = np.array(actions_taken)
 
-    # Convert frames to seconds for readability
     fps = config.FPS
     print(f"  {'Reward:':20s} mean={rewards.mean():8.2f}  std={rewards.std():8.2f}  "
           f"min={rewards.min():8.2f}  max={rewards.max():8.2f}")
@@ -242,7 +244,6 @@ def _evaluate(env, network, n_episodes=100):
     print(f"  {'Actions taken:':20s} mean={actions.mean():8.2f}  std={actions.std():8.2f}  "
           f"min={actions.min():8.0f}  max={actions.max():8.0f}")
 
-    # Survival histogram (coarse bins)
     survived_full = (survivals >= max_frames).sum()
     print(f"  {'Full survival:':20s} {survived_full}/{n_episodes} ({100 * survived_full / n_episodes:.1f}%)")
     print(f"{sep}\n")

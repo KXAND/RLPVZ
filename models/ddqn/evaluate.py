@@ -73,6 +73,7 @@ def evaluate_ddqn_state_dict(
     episodes,
     episode=None,
     step=None,
+    stage_name="base",
 ):
     if not instances:
         raise ValueError("DDQN eval requires at least one game instance")
@@ -107,6 +108,7 @@ def evaluate_ddqn_state_dict(
             episodes=episodes,
             episode=episode,
             step=step,
+            stage_name=stage_name,
         )
     finally:
         if env is not None and hasattr(env, "close"):
@@ -121,6 +123,7 @@ def _evaluate_with_env(
     episodes,
     episode=None,
     step=None,
+    stage_name="base",
 ):
     eval_id = new_eval_id("real_ddqn")
     start_time = time_eval_run()
@@ -166,7 +169,7 @@ def _evaluate_with_env(
         env_kind="real",
         episode=episode,
         step=step,
-        stage_name="base",
+        stage_name=stage_name,
         win_condition=scenario_spec.win_condition,
         target_sublevels=scenario_spec.target_sublevels,
         details=details,

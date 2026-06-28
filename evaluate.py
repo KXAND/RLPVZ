@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 
 from models.ddqn.evaluate import evaluate_ddqn
+from models.ppo.evaluate import evaluate_ppo
 from training.args import get_args
 from training.evaluation import EvaluationWriter, load_evaluation_config
 from training.game_instances import prepare_game_instances
@@ -33,6 +34,16 @@ def main(argv=None):
             env_spec=env_spec,
             scenario_spec=scenario_spec,
             episodes=eval_args.eval_episodes or eval_config.episodes,
+        )
+    elif args.algo == "ppo":
+        result = evaluate_ppo(
+            args=args,
+            model_path=model_path,
+            instances=instances,
+            env_spec=env_spec,
+            scenario_spec=scenario_spec,
+            episodes=eval_args.eval_episodes or eval_config.episodes,
+            device="auto",
         )
     else:
         raise NotImplementedError(

@@ -336,6 +336,7 @@ class AsyncDDQNTrainer:
                 episodes=self.context.eval_config.episodes,
                 episode=self.stats.episode_count,
                 step=self.transition_count,
+                stage_name=stage_name,
             )
             self.context.evaluation_writer.write(eval_result)
             self.metric_emitter.emit_strict_eval(

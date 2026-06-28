@@ -2,7 +2,7 @@ from .plant import Plant
 from ... import config
 
 SQUASH_COST = 50
-SQUASH_COOLDOWN = 20
+SQUASH_COOLDOWN = 30
 SQUASH_MAX_HP = 300
 SQUASH_ATTACK = 1800
 SQUASH_ATTACK_COOLDOWN = 1

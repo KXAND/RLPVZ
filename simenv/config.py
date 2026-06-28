@@ -1,6 +1,6 @@
 DIFFICULTY = {
     "fps": 2,
-    "max_frames": 400,
+    "max_frames": 800,
     "rows": 5,
     "cols": 9,
     "initial_sun": 50,

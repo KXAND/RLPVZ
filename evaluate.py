@@ -84,12 +84,6 @@ def _parse_eval_args(argv=None):
         default=None,
         help="Directory for eval.jsonl/eval.csv/eval_snapshot.json",
     )
-    parser.add_argument(
-        "--eval_num_envs",
-        type=int,
-        default=None,
-        help="Number of real eval game instances",
-    )
     return parser.parse_known_args(argv)
 
 
@@ -101,7 +95,7 @@ def _load_eval_config(args):
 
 
 def _apply_eval_instance_config(args, eval_args, eval_config):
-    args.num_envs = eval_args.eval_num_envs or eval_config.real_num_envs
+    args.num_envs = 1
     if eval_config.real_base_port is not None:
         args.base_port = eval_config.real_base_port
         args.port = eval_config.real_base_port

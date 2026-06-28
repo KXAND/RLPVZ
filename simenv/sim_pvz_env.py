@@ -2,7 +2,7 @@ import numpy as np
 from gymnasium.spaces import Discrete
 from simenv.pvz_sim import (
     Scene, Move, config, WaveZombieSpawner,
-    Sunflower, Peashooter, Wallnut, Potatomine,
+    Sunflower, Peashooter, SnowPea, Repeater, Wallnut, Potatomine,
 )
 
 MAX_SUN = 9999.0
@@ -12,8 +12,8 @@ ZOMBIE_HP_NORM = 3000.0
 CARD_SPECS = (
     ("sunflower", "Sunflower", 1, Sunflower),
     ("peashooter", "Peashooter", 0, Peashooter),
-    ("snow-pea", "Snow Pea", 5, None),
-    ("repeater", "Repeater", 7, None),
+    ("snow-pea", "Snow Pea", 5, SnowPea),
+    ("repeater", "Repeater", 7, Repeater),
     ("wall-nut", "Wall-nut", 3, Wallnut),
     ("squash", "Squash", 17, None),
     ("cherry-bomb", "Cherry Bomb", 2, None),

@@ -22,6 +22,8 @@ except Exception:
 COLORS = {
     "Sunflower": "#FFD700",
     "Peashooter": "#228B22",
+    "SnowPea": "#7EC8E3",
+    "Repeater": "#006400",
     "Wallnut": "#8B4513",
     "Potatomine": "#FF4444",
     "Zombie": "#808080",
@@ -39,6 +41,8 @@ COLORS = {
 NAMES_CN = {
     "Sunflower": "Sunflower",
     "Peashooter": "Peashooter",
+    "SnowPea": "Snow Pea",
+    "Repeater": "Repeater",
     "Wallnut": "Wall-nut",
     "Potatomine": "Mine",
     "Zombie": "Zombie",
@@ -128,7 +132,8 @@ def replay_episode(render_data, fps=10, save_path=None, title="SimPVZ Episode Re
                 ax_grid.add_patch(p)
                 plant_patches.append(p)
                 # Health bar
-                max_hp = {"Sunflower": 300, "Peashooter": 300, "Wallnut": 4000,
+                max_hp = {"Sunflower": 300, "Peashooter": 300, "SnowPea": 300,
+                          "Repeater": 300, "Wallnut": 4000,
                           "Potatomine": 300}.get(name, 300)
                 hp_ratio = max(0, hp / max_hp)
                 if hp_ratio < 0.99:
@@ -179,7 +184,8 @@ def replay_episode(render_data, fps=10, save_path=None, title="SimPVZ Episode Re
             "",
             "Cooldowns (s):",
         ]
-        cd_map = {"sunflower": "SF", "peashooter": "Pea", "wall-nut": "Wall", "potatomine": "Mine"}
+        cd_map = {"sunflower": "SF", "peashooter": "Pea", "snow-pea": "Snow",
+                  "repeater": "Rep", "wall-nut": "Wall", "potatomine": "Mine"}
         cooldowns = frame_data.get("cooldowns", {})
         for name, cd in cooldowns.items():
             abbr = cd_map.get(name, name[:4])

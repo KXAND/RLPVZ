@@ -21,6 +21,7 @@ class WaveZombieSpawner(ZombieSpawner):
             - 1
         )
         self.p = ZOMBIE_SPAWN["base_advanced_probability"]
+        self.wave_index = 0
 
     def spawn(self, scene):
         if self._timer <= 0 and self._wave_timer > 0:
@@ -63,3 +64,4 @@ class WaveZombieSpawner(ZombieSpawner):
                     self.p * ZOMBIE_SPAWN["advanced_probability_growth"],
                     ZOMBIE_SPAWN["max_advanced_probability"],
                 )
+                self.wave_index += 1

@@ -28,13 +28,31 @@ class CheckpointPaths:
     tagged_path: str | None
 
 
+def _resolve_config_name(args) -> str:
+    """Extract a short config name from the training config path.
+
+    training_config_baseline.yaml       -> baseline
+    training_config_baseline_4layer.yaml -> baseline_4layer
+    training_config.yaml                -> default
+    """
+    config_path = getattr(args, "training_config", "training_config.yaml")
+    name = os.path.splitext(os.path.basename(config_path))[0]
+    # Strip common prefix for brevity
+    for prefix in ("training_config_", "training_config"):
+        if name.startswith(prefix) and name != prefix:
+            name = name[len(prefix):]
+            break
+    return name or "default"
+
+
 # 构建输出目录和文件地址、格式
 def build_run_paths(args) -> RunPaths:
     algo = args.algo
-    output_dir = get_model_output_dir(algo)
+    config_name = _resolve_config_name(args)
+    output_dir = get_model_output_dir(algo, config_name)
     run_id = _resolve_run_id(args, output_dir)
     run_dir = os.path.join(output_dir, "runs", run_id)
-    cached_model_path = get_cached_model_path(algo)
+    cached_model_path = get_cached_model_path(algo, config_name)
     log_dir = "logs"
     return RunPaths(
         algo=algo,
@@ -84,13 +102,15 @@ def _find_latest_run_id(output_dir: str) -> str | None:
     return max(candidates)[1]
 
 
-def get_model_output_dir(algo: str) -> str:
+def get_model_output_dir(algo: str, config_name: str = "") -> str:
+    if config_name:
+        return os.path.join("models_output", algo, config_name)
     return os.path.join("models_output", algo)
 
 
-def get_cached_model_path(algo: str) -> str:
+def get_cached_model_path(algo: str, config_name: str = "") -> str:
     extension = get_algorithm_registration(algo).model_extension
-    return os.path.join(get_model_output_dir(algo), f"latest_model{extension}")
+    return os.path.join(get_model_output_dir(algo, config_name), f"latest_model{extension}")
 
 
 def build_checkpoint_paths(

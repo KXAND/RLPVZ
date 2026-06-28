@@ -120,57 +120,62 @@ class AsyncDDQNTrainer:
         evaluate_frequency,
         evaluate_n_iter,
     ):
-        while self.stats.episode_count < max_episodes and not self.solved:
-            self._drain_stats_queue(
-                worker_pool, evaluate_frequency, evaluate_n_iter
-            )
-
-            try:
-                transition = worker_pool.transition_queue.get(timeout=1.0)
-            except queue.Empty:
-                if not self.worker_status.has_active_workers:
-                    raise RuntimeError("所有 DDQN worker 都已退出，训练终止")
-                continue
-
-            # Store contiguous copies to reduce memory fragmentation
-            (t_state, t_action, t_reward, t_done,
-             t_next_state, t_mask, t_next_mask) = transition
-            self.buffer.append(
-                np.ascontiguousarray(t_state),
-                t_action,
-                t_reward,
-                t_done,
-                np.ascontiguousarray(t_next_state),
-                np.ascontiguousarray(t_mask),
-                np.ascontiguousarray(t_next_mask),
-            )
-            del t_state, t_next_state, t_mask, t_next_mask, transition
-            self.transition_count += 1
-
-            if self.buffer.burn_in_capacity() < 1:
-                continue
-
-            if self.transition_count % network_update_frequency == 0:
-                loss_value = self.learner.update(self.buffer)
-                if loss_value is not None:
-                    self.stats.record_loss(loss_value)
-                    self.metric_emitter.emit_loss(
-                        loss_value=loss_value,
-                        transition_count=self.transition_count,
-                        episode_count=self.stats.episode_count,
-                    )
-
-            if self.transition_count % network_sync_frequency == 0:
-                self.stats.record_sync()
-                worker_pool.publish_weights(
-                    self.learner.sync_target(),
-                    global_episode=self.stats.episode_count,
+        try:
+            while self.stats.episode_count < max_episodes and not self.solved:
+                self._drain_stats_queue(
+                    worker_pool, evaluate_frequency, evaluate_n_iter
                 )
 
-        worker_pool.request_stop()
-        self._drain_stats_queue(worker_pool, evaluate_frequency, evaluate_n_iter)
-        self._emit_training_metrics(force=True)
-        self.reporter.print_finished(self.solved, self.stats.episode_count)
+                try:
+                    transition = worker_pool.transition_queue.get(timeout=1.0)
+                except queue.Empty:
+                    if not self.worker_status.has_active_workers:
+                        raise RuntimeError("所有 DDQN worker 都已退出，训练终止")
+                    continue
+
+                # Store contiguous copies to reduce memory fragmentation
+                (t_state, t_action, t_reward, t_done,
+                 t_next_state, t_mask, t_next_mask) = transition
+                self.buffer.append(
+                    np.ascontiguousarray(t_state),
+                    t_action,
+                    t_reward,
+                    t_done,
+                    np.ascontiguousarray(t_next_state),
+                    np.ascontiguousarray(t_mask),
+                    np.ascontiguousarray(t_next_mask),
+                )
+                del t_state, t_next_state, t_mask, t_next_mask, transition
+                self.transition_count += 1
+
+                if self.buffer.burn_in_capacity() < 1:
+                    continue
+
+                if self.transition_count % network_update_frequency == 0:
+                    loss_value = self.learner.update(self.buffer)
+                    if loss_value is not None:
+                        self.stats.record_loss(loss_value)
+                        self.metric_emitter.emit_loss(
+                            loss_value=loss_value,
+                            transition_count=self.transition_count,
+                            episode_count=self.stats.episode_count,
+                        )
+
+                if self.transition_count % network_sync_frequency == 0:
+                    self.stats.record_sync()
+                    worker_pool.publish_weights(
+                        self.learner.sync_target(),
+                        global_episode=self.stats.episode_count,
+                    )
+        finally:
+            # Drain remaining episode messages BEFORE telling workers to stop,
+            # so in-flight episodes get their stats recorded.
+            self._drain_stats_queue(worker_pool, evaluate_frequency, evaluate_n_iter)
+            worker_pool.request_stop()
+            self._drain_stats_queue(worker_pool, evaluate_frequency, evaluate_n_iter)
+            # Always save the final plot, even if training was interrupted.
+            self._emit_training_metrics(force=True)
+            self.reporter.print_finished(self.solved, self.stats.episode_count)
 
     def _drain_stats_queue(self, worker_pool, evaluate_frequency, evaluate_n_iter):
         self.worker_status.check_processes(worker_pool.workers)

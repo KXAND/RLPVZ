@@ -50,10 +50,22 @@ class TrainingCurvePlotter:
                 return
 
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        self._plot_reward_trend(mean_rewards, eval_steps, eval_rewards)
-        self._plot_episode_rewards(episode_rewards, mean_rewards)
-        self._plot_iterations(mean_iterations)
-        self._plot_loss(losses)
+
+        plots = [
+            ("rewards",       lambda: self._plot_reward_trend(mean_rewards, eval_steps, eval_rewards)),
+            ("episode_rewards", lambda: self._plot_episode_rewards(episode_rewards, mean_rewards)),
+            ("iterations",    lambda: self._plot_iterations(mean_iterations)),
+            ("loss",          lambda: self._plot_loss(losses)),
+        ]
+        for name, plot_fn in plots:
+            try:
+                plot_fn()
+            except Exception as exc:
+                print(
+                    f"[Plot] {name} 绘图失败 (ep={step_count}): {exc}",
+                    flush=True,
+                )
+
         self._last_update_step = step_count
 
     def _derived_path(self, suffix: str) -> str:

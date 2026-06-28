@@ -9,7 +9,6 @@ from stable_baselines3.common.vec_env import (
     DummyVecEnv,
     SubprocVecEnv,
     VecMonitor,
-    VecFrameStack,
     VecNormalize,
 )
 
@@ -165,6 +164,12 @@ def make_single_env(args, instance, env_spec=None, scenario_spec=None):
         )
     _validate_env_spec(env, env_spec, scenario_spec)
     env = ActionMasker(env, mask_fn)
+
+    # Convert Dict obs to 596-dim flat vector (same as DDQN paper baseline)
+    if getattr(args, "use_flat_obs", True):
+        from .flat_obs_wrapper import FlatPaperObsWrapper
+        env = FlatPaperObsWrapper(env)
+
     return env
 
 
@@ -188,8 +193,8 @@ def get_env(args, instances, env_spec=None, scenario_spec=None, load_path=None):
     # 1. 监控 (记录原始奖励)
     env = VecMonitor(env)
 
-    # 2. 归一化 (关键优化: 稳定 PPO 训练)
-    # 归一化观测值和奖励，防止梯度爆炸/消失
+    # 2. 观测/奖励归一化：与 DDQN baseline 统一，均关闭
+    # 596-dim 向量已内建 [0,1] 归一化，sparse reward 不适合 running-stats 归一化
     if load_path:
         path_no_ext = os.path.splitext(load_path)[0]
         vec_norm_path = path_no_ext + "_vecnormalize.pkl"
@@ -197,16 +202,11 @@ def get_env(args, instances, env_spec=None, scenario_spec=None, load_path=None):
             print(f"加载归一化统计: {vec_norm_path}")
             env = VecNormalize.load(vec_norm_path, env)
             env.training = True
-            env.norm_reward = True
-            env.norm_obs = True
+            env.norm_reward = False
+            env.norm_obs = False
         else:
-            print(f"未找到归一化统计文件，创建新的归一化层")
-            env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0)
+            env = VecNormalize(env, norm_obs=False, norm_reward=False, clip_obs=10.0)
     else:
-        env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0)
-
-    # 3. 帧堆叠 (赋予时间感知)
-    # 堆叠最近4帧，让AI能感知僵尸的移动速度和波次节奏
-    env = VecFrameStack(env, n_stack=4, channels_order="last")
+        env = VecNormalize(env, norm_obs=False, norm_reward=False, clip_obs=10.0)
 
     return env

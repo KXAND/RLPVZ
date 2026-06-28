@@ -64,15 +64,19 @@ def get_model(args, env, device, load_path=None):
     net_arch = net_configs[args.net]
 
     policy_kwargs = dict(net_arch=net_arch)
-    if not args.no_attn:
+
+    # Flat 596-dim observation → use MlpPolicy (no Dict space, no attention needed)
+    use_flat = getattr(args, "use_flat_obs", True)
+
+    if not use_flat and not args.no_attn:
         policy_kwargs.update(
             features_extractor_class=PVZAttentionExtractor,
             features_extractor_kwargs=dict(
-                hidden_size=128,  # 精简维度：GPU 不是瓶颈，优先减少计算量
-                attn_heads=4,  # 精简注意力头数
-                ff_dim=256,  # 精简前馈维度
+                hidden_size=128,
+                attn_heads=4,
+                ff_dim=256,
                 dropout=0.0,
-                num_layers=2,  # 精简层数：2层足够，推理快 2 倍
+                num_layers=2,
             ),
         )
 
@@ -116,14 +120,15 @@ def get_model(args, env, device, load_path=None):
             )
         )
 
+        policy_type = "MlpPolicy" if use_flat else "MultiInputPolicy"
         model = MaskablePPO(
-            "MultiInputPolicy",
+            policy_type,
             env,
             learning_rate=lr_schedule,
             n_steps=args.n_steps,
             batch_size=args.batch,
             n_epochs=args.n_epochs,
-            gamma=0.995,  # 提高 Gamma (0.99 -> 0.995) 以关注更长远的未来
+            gamma=getattr(args, "ppo_gamma", 0.99),
             gae_lambda=0.95,
             clip_range=0.2,
             ent_coef=args.start_ent,

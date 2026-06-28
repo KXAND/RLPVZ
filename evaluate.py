@@ -8,6 +8,7 @@ from training.args import get_args
 from training.evaluation import EvaluationWriter, load_evaluation_config
 from training.game_instances import prepare_game_instances
 from training.paths import get_cached_model_path
+from training.registry import available_algorithms
 from training.specs import build_base_eval_specs
 from utils.train_utils import load_training_config
 
@@ -71,6 +72,13 @@ def main(argv=None):
 
 def _parse_eval_args(argv=None):
     parser = argparse.ArgumentParser(description="Evaluate a trained real-env model")
+    parser.add_argument(
+        "--algo",
+        type=str,
+        choices=available_algorithms(),
+        default=None,
+        help="Algorithm to evaluate",
+    )
     parser.add_argument("--model", type=str, default=None, help="Model checkpoint path")
     parser.add_argument(
         "--eval_episodes",
@@ -84,7 +92,10 @@ def _parse_eval_args(argv=None):
         default=None,
         help="Directory for eval.jsonl/eval.csv/eval_snapshot.json",
     )
-    return parser.parse_known_args(argv)
+    eval_args, train_argv = parser.parse_known_args(argv)
+    if eval_args.algo:
+        train_argv.extend(["--algo", eval_args.algo])
+    return eval_args, train_argv
 
 
 def _load_eval_config(args):

@@ -2,6 +2,7 @@
 
 import gc
 import os
+from datetime import datetime
 import numpy as np
 import torch
 from copy import deepcopy
@@ -35,12 +36,15 @@ def train_sim(
     lr=1e-3,
     network_update_freq=32,
     network_sync_freq=2000,
-    save_path="saved/sim_ddqn.pt",
+    save_path=None,
     eval_episodes=100,
     visualize=False,
     plot_freq=100,
     plot_callback=None,
 ):
+    if save_path is None:
+        save_path = _default_save_path("ddqn", "sim_ddqn.pt")
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     env = SimPVZEnv()
     network = DDQNNetwork(env, learning_rate=lr, device=device)
@@ -218,6 +222,7 @@ def _save_training_artifacts(
     training_loss,
     plot_callback=None,
 ):
+    os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
     rewards = np.array(training_rewards)
     iterations = np.array(training_iterations)
     loss = np.array(training_loss)
@@ -226,6 +231,11 @@ def _save_training_artifacts(
     np.save(save_path.replace(".pt", "_loss.npy"), loss)
     if plot_callback is not None:
         plot_callback(save_path, rewards, iterations, loss)
+
+
+def _default_save_path(algo, filename):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return os.path.join("saved", algo, timestamp, filename)
 
 
 def _evaluate(env, network, n_episodes=100):

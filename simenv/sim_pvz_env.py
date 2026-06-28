@@ -3,6 +3,7 @@ from gymnasium.spaces import Discrete
 from simenv.pvz_sim import (
     Scene, Move, config, WaveZombieSpawner,
     Sunflower, Peashooter, SnowPea, Repeater, Wallnut, Potatomine,
+    Squash, CherryBomb, Spikeweed, KernelPult, MelonPult,
 )
 
 MAX_SUN = 9999.0
@@ -15,11 +16,11 @@ CARD_SPECS = (
     ("snow-pea", "Snow Pea", 5, SnowPea),
     ("repeater", "Repeater", 7, Repeater),
     ("wall-nut", "Wall-nut", 3, Wallnut),
-    ("squash", "Squash", 17, None),
-    ("cherry-bomb", "Cherry Bomb", 2, None),
-    ("spikeweed", "Spikeweed", 21, None),
-    ("kernel-pult", "Kernel-pult", 34, None),
-    ("melon-pult", "Melon-pult", 39, None),
+    ("squash", "Squash", 17, Squash),
+    ("cherry-bomb", "Cherry Bomb", 2, CherryBomb),
+    ("spikeweed", "Spikeweed", 21, Spikeweed),
+    ("kernel-pult", "Kernel-pult", 34, KernelPult),
+    ("melon-pult", "Melon-pult", 39, MelonPult),
 )
 
 

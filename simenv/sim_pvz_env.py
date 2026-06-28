@@ -10,6 +10,20 @@ MAX_SUN = 10000
 SUN_NORM = 200.0
 
 
+CARD_SPECS = (
+    ("sunflower", "Sunflower", 1, Sunflower),
+    ("peashooter", "Peashooter", 0, Peashooter),
+    ("snow-pea", "Snow Pea", 5, None),
+    ("repeater", "Repeater", 7, None),
+    ("wall-nut", "Wall-nut", 3, Wallnut),
+    ("squash", "Squash", 17, None),
+    ("cherry-bomb", "Cherry Bomb", 2, None),
+    ("spikeweed", "Spikeweed", 21, None),
+    ("kernel-pult", "Kernel-pult", 34, None),
+    ("melon-pult", "Melon-pult", 39, None),
+)
+
+
 class SimPVZEnv:
     """
     Simplified PVZ simulation environment with DDQN-compatible interface.
@@ -22,26 +36,29 @@ class SimPVZEnv:
     """
 
     def __init__(self):
+        self.card_specs = CARD_SPECS
         self.plant_deck = {
-            "sunflower": Sunflower,
-            "peashooter": Peashooter,
-            "wall-nut": Wallnut,
-            "potatomine": Potatomine,
+            key: plant_cls
+            for key, _, _, plant_cls in self.card_specs
+            if plant_cls is not None
         }
         self.rows = config.N_LANES       # 5
         self.cols = config.LANE_LENGTH   # 9
-        self.num_cards = len(self.plant_deck)  # 4
+        self.num_cards = len(self.card_specs)  # 10
         self.grid_size = self.rows * self.cols  # 45
+        self.wait_action = self.num_cards * self.grid_size
 
-        self.action_space = Discrete(
-            self.num_cards * self.rows * self.cols + 1)  # 181
+        self.action_space = Discrete(self.wait_action + 1)  # 451
         self.action_space.n = self.action_space.n  # handy attribute
 
-        self._plant_names = list(self.plant_deck)
+        self._plant_names = [key for key, _, _, _ in self.card_specs]
+        self.card_plant_ids = [plant_id for _, _, plant_id, _ in self.card_specs]
+        self._implemented_plant_names = list(self.plant_deck)
         self._plant_classes = [
-            self.plant_deck[n].__name__ for n in self.plant_deck]
+            self.plant_deck[n].__name__ for n in self._implemented_plant_names]
         self._plant_no = {
-            self._plant_classes[i]: i for i in range(self.num_cards)}
+            self._plant_classes[i]: self._plant_names.index(self._implemented_plant_names[i])
+            for i in range(len(self._implemented_plant_names))}
 
         self._scene = Scene(self.plant_deck, WaveZombieSpawner())
         self._steps = 0
@@ -96,13 +113,13 @@ class SimPVZEnv:
 
     def mask_available_actions(self):
         mask = np.zeros(self.action_space.n, dtype=bool)
-        mask[0] = True  # no-op always available
+        mask[self.wait_action] = True
         empty_cells, available_plants = self._scene.get_available_moves()
         if len(empty_cells[0]) == 0:
             return mask
-        base = (empty_cells[0] + self.rows * empty_cells[1]) * self.num_cards
+        grid_indices = empty_cells[0] * self.cols + empty_cells[1]
         for plant in available_plants:
-            idx = base + self._plant_no[plant.__name__] + 1
+            idx = self._plant_no[plant.__name__] * self.grid_size + grid_indices
             mask[idx] = True
         return mask
 
@@ -128,11 +145,13 @@ class SimPVZEnv:
             zombie_grid[idx] += int(zombie.hp)
 
         action_avail = np.array([
-            self._scene.plant_cooldowns[name] <= 0
+            name in self.plant_deck
+            and self._scene.plant_cooldowns[name] <= 0
             for name in self._plant_names
         ], dtype=bool)
         action_avail *= np.array([
-            self._scene.sun >= self.plant_deck[name].COST
+            name in self.plant_deck
+            and self._scene.sun >= self.plant_deck[name].COST
             for name in self._plant_names
         ], dtype=bool)
 
@@ -142,15 +161,20 @@ class SimPVZEnv:
              action_avail.astype(int)]).astype(np.int64)
 
     def _take_action(self, action):
-        if action > 0:
-            action -= 1
-            plant_idx = action % self.num_cards
-            grid_idx = action // self.num_cards
-            lane = grid_idx % self.rows
-            pos = grid_idx // self.rows
-            move = Move(self._plant_names[plant_idx], lane, pos)
-            if move.is_valid(self._scene):
-                move.apply_move(self._scene)
+        if action == self.wait_action:
+            return
+        if action < 0 or action >= self.wait_action:
+            return
+        plant_idx = action // self.grid_size
+        grid_idx = action % self.grid_size
+        plant_name = self._plant_names[plant_idx]
+        if plant_name not in self.plant_deck:
+            return
+        lane = grid_idx // self.cols
+        pos = grid_idx % self.cols
+        move = Move(plant_name, lane, pos)
+        if move.is_valid(self._scene):
+            move.apply_move(self._scene)
 
     def _capture_frame(self):
         """Capture current scene state for later visualization."""

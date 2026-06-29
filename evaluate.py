@@ -1,5 +1,6 @@
 import argparse
 import os
+import shutil
 from datetime import datetime
 
 from models.ddqn.evaluate import evaluate_ddqn
@@ -66,8 +67,11 @@ def main(argv=None):
         save_episode_details=eval_config.save_episode_details,
     )
     writer.write(result)
+    copied_model_path = _copy_model_to_eval_output(model_path, output_dir)
     _print_eval_result(result)
     print(f"Saved eval summary to {writer.csv_path}")
+    if copied_model_path:
+        print(f"Copied eval model to {copied_model_path}")
 
 
 def _parse_eval_args(argv=None):
@@ -115,6 +119,19 @@ def _apply_eval_instance_config(args, eval_args, eval_config):
 def _default_eval_output(algo):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return os.path.join("eval_output", algo, timestamp)
+
+
+def _copy_model_to_eval_output(model_path, output_dir):
+    if not model_path:
+        return None
+    if not os.path.isfile(model_path):
+        return None
+    os.makedirs(output_dir, exist_ok=True)
+    destination = os.path.join(output_dir, os.path.basename(model_path))
+    if os.path.abspath(model_path) == os.path.abspath(destination):
+        return destination
+    shutil.copy2(model_path, destination)
+    return destination
 
 
 def _print_eval_metadata(args, model_path, output_dir, episodes,

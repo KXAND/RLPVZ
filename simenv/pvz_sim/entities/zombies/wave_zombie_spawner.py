@@ -27,6 +27,13 @@ class WaveZombieSpawner(ZombieSpawner):
 
     def spawn(self, scene):
         if self._timer <= 0 and self._wave_timer > 0:
+            self.last_wave_was_flag = (
+                self.wave_index % ZOMBIE_SPAWN["flag_wave_modulo"]
+                == ZOMBIE_SPAWN["flag_wave_remainder"]
+            )
+            if self.last_wave_was_flag:
+                scene.add_zombie(Zombie_flag(0))
+                self.completed_sublevels += 1
             lane = random.choice(range(config.N_LANES))
             s = random.random()
             if s < self.p:
@@ -35,6 +42,7 @@ class WaveZombieSpawner(ZombieSpawner):
                 scene.add_zombie(Zombie_cone(lane))
             else:
                 scene.add_zombie(Zombie(lane))
+            self.wave_index += 1
             self._timer = SPAWN_INTERVAL * config.FPS - 1
         else:
             if self._wave_timer > 0:

@@ -73,7 +73,7 @@ def build_run_paths(args) -> RunPaths:
 def _resolve_run_id(args, output_dir: str) -> str:
     if (
         getattr(args, "auto_resume", True)
-        and os.path.exists(get_cached_model_path(args.algo))
+        and os.path.exists(get_cached_model_path(args.algo, _resolve_config_name(args)))
     ):
         latest_run_id = _find_latest_run_id(output_dir)
         if latest_run_id:

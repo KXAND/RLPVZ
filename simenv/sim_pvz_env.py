@@ -266,12 +266,11 @@ class SimPVZEnv:
             r_kill = sum(self._zombie_kill_reward(z) for z in killed)
             reward += r_kill
             details["kill"] = r_kill
-
-        if current_wave_index > self._last_wave_index:
-            completed = current_wave_index - self._last_wave_index
-            r_wave = completed * float(self.rewards.get("wave_complete", 4.0))
-            reward += r_wave
-            details["wave"] = r_wave
+            flag_kills = sum(1 for z in killed if z["name"] == "Zombie_flag")
+            if flag_kills:
+                r_wave = flag_kills * float(self.rewards.get("wave_complete", 4.0))
+                reward += r_wave
+                details["wave"] = r_wave
 
         lost_plants = [
             plant for entity_id, plant in self._last_plants.items()

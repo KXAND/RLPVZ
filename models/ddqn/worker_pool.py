@@ -181,14 +181,24 @@ def ddqn_worker_main(
             from .adapter import paper_state_dim
             n_inputs_override = paper_state_dim(env.rows, env.cols, env.num_cards)
 
-        network = QNetwork(
-            env,
-            learning_rate=args.ddqn_lr,
-            device="cpu",
-            hidden_sizes=hidden_sizes,
-            n_inputs_override=n_inputs_override,
-            create_optimizer=False,
-        )
+        use_cnn = getattr(args, "use_cnn", False)
+        if use_cnn:
+            from .cnn_network import CNNQNetwork
+            network = CNNQNetwork(
+                env,
+                learning_rate=args.ddqn_lr,
+                device="cpu",
+                create_optimizer=False,
+            )
+        else:
+            network = QNetwork(
+                env,
+                learning_rate=args.ddqn_lr,
+                device="cpu",
+                hidden_sizes=hidden_sizes,
+                n_inputs_override=n_inputs_override,
+                create_optimizer=False,
+            )
         network.load_state_dict(initial_state_dict)
         network.eval()
 

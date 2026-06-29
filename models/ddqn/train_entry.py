@@ -63,39 +63,45 @@ def _build_ddqn_env(args, instance=None, env_spec=None, scenario_spec=None):
 
 def _print_network_summary(network, use_paper, hidden_sizes, device):
     """Print PyTorch network structure and parameter count."""
-    n_inputs = network.n_inputs
     n_outputs = network.n_outputs
     total_params = sum(p.numel() for p in network.parameters())
     trainable_params = sum(p.numel() for p in network.parameters() if p.requires_grad)
 
+    is_cnn = hasattr(network, '_n_grid_channels')
+
     print(f"\n{'='*60}")
-    print(f"  DDQN Network Summary")
+    print(f"  DDQN Network Summary{' (CNN)' if is_cnn else ''}")
     print(f"{'='*60}")
     print(f"  Device:        {device}")
-    print(f"  Observation:   {n_inputs} dim {'(paper format)' if use_paper else ''}")
+    print(f"  Observation:   596 dim {'(paper format)' if use_paper else ''}")
     print(f"  Actions:       {n_outputs}")
-    hidden_str = " -> ".join(str(h) for h in (hidden_sizes or [256, 128]))
-    print(f"  Hidden layers: {hidden_str}")
-    print(f"  Activation:    LeakyReLU")
-    print(f"  Architecture:  {n_inputs} -> {hidden_str} -> {n_outputs}")
+    if is_cnn:
+        print(f"  Architecture:  3x3-CNN + 1x9-CNN | global-MLP -> head")
+    else:
+        hidden_str = " -> ".join(str(h) for h in (hidden_sizes or [256, 128]))
+        print(f"  Hidden layers: {hidden_str}")
+        print(f"  Activation:    LeakyReLU")
+        print(f"  Architecture:  596 -> {hidden_str} -> {n_outputs}")
     print(f"{'='*60}")
     print(f"  Total params:  {total_params:,}")
     print(f"  Trainable:     {trainable_params:,}")
     print(f"{'='*60}")
 
-    # Print per-layer details
+    # Per-layer details
     print(f"\n  Layer details:")
-    print(f"  {'Layer':<20} {'Shape':<30} {'Params':>12}")
-    print(f"  {'-'*62}")
+    print(f"  {'Layer':<25} {'Shape':<30} {'Params':>12}")
+    print(f"  {'-'*67}")
     for name, module in network.named_modules():
         if isinstance(module, torch.nn.Linear):
             w = module.weight
-            shape = f"[{w.shape[0]}, {w.shape[1]}]"
-            params = w.numel() + (module.bias.numel() if module.bias is not None else 0)
-            print(f"  {name:<20} {shape:<30} {params:>12,}")
-        elif isinstance(module, torch.nn.LeakyReLU):
-            neg = module.negative_slope
-            print(f"  {name:<20} {'LeakyReLU(neg_slope=' + str(neg) + ')':<30} {'--':>12}")
+            bias = module.bias.numel() if module.bias is not None else 0
+            print(f"  {name:<25} [{'x'.join(str(d) for d in w.shape)}]{' +b' if bias else '':<20} {w.numel() + bias:>12,}")
+        elif isinstance(module, torch.nn.Conv2d):
+            w = module.weight
+            bias = module.bias.numel() if module.bias is not None else 0
+            print(f"  {name:<25} {'Conv'+str(tuple(w.shape)):<30} {w.numel() + bias:>12,}")
+        elif isinstance(module, (torch.nn.BatchNorm2d, torch.nn.ReLU, torch.nn.Dropout, torch.nn.LeakyReLU)):
+            pass  # skip activation/norm layers
     print()
 
 
@@ -183,13 +189,22 @@ class DDQNAlgorithm:
                 env.rows, env.cols, env.num_cards)
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        network = QNetwork(
-            env,
-            learning_rate=context.args.ddqn_lr,
-            device=device,
-            hidden_sizes=hidden_sizes,
-            n_inputs_override=n_inputs_override,
-        )
+        use_cnn = getattr(context.args, "use_cnn", False)
+        if use_cnn:
+            from .cnn_network import CNNQNetwork
+            network = CNNQNetwork(
+                env,
+                learning_rate=context.args.ddqn_lr,
+                device=device,
+            )
+        else:
+            network = QNetwork(
+                env,
+                learning_rate=context.args.ddqn_lr,
+                device=device,
+                hidden_sizes=hidden_sizes,
+                n_inputs_override=n_inputs_override,
+            )
         context.artifacts.network = network
 
         load_path = context.checkpoint.resolve_load_path()

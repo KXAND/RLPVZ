@@ -76,7 +76,6 @@ class SimPVZEnv:
         self.rewards = REWARDS
         self._last_sun = 0
         self._last_plants = {}
-        self._last_zombies = {}
         self._last_wave_index = 0
         self._last_potential = 0.0
         self._reward_details = {}
@@ -101,7 +100,6 @@ class SimPVZEnv:
         self._last_mask = self.mask_available_actions()
         self._last_sun = self._scene.sun
         self._last_plants = self._snapshot_plants()
-        self._last_zombies = self._snapshot_zombies()
         self._last_wave_index = self._current_wave_index()
         self._last_potential = self._calculate_potential()
         self._reward_details = {}
@@ -112,6 +110,8 @@ class SimPVZEnv:
     def step(self, action):
         # Execute action
         action_success, planted_name = self._take_action(action)
+        self._scene.killed_zombies = []
+        self._scene.escaped_zombies = []
 
         # Advance simulation until player can act or game ends
         self._scene.step()
@@ -231,7 +231,6 @@ class SimPVZEnv:
         reward = 0.0
         details = {}
         current_plants = self._snapshot_plants()
-        current_zombies = self._snapshot_zombies()
         current_wave_index = self._current_wave_index()
 
         if not action_success:
@@ -261,7 +260,7 @@ class SimPVZEnv:
             reward += r_sun
             details["sun"] = r_sun
 
-        killed = self._killed_zombies(current_zombies)
+        killed = list(getattr(self._scene, "killed_zombies", []))
         if killed:
             r_kill = sum(self._zombie_kill_reward(z) for z in killed)
             reward += r_kill
@@ -313,7 +312,6 @@ class SimPVZEnv:
 
         self._last_sun = self._scene.sun
         self._last_plants = current_plants
-        self._last_zombies = current_zombies
         self._last_wave_index = current_wave_index
         self._last_potential = potential
         return reward, details
@@ -349,31 +347,6 @@ class SimPVZEnv:
             "Zombie_bucket": "buckethead",
         }
         return float(rewards.get(key_by_class.get(zombie["name"], "zombie"), default))
-
-    def _killed_zombies(self, current_zombies):
-        killed = []
-        for entity_id, zombie in self._last_zombies.items():
-            if entity_id in current_zombies:
-                continue
-            if zombie["pos"] < 0:
-                continue
-            if self._is_armor_break(zombie, current_zombies):
-                continue
-            killed.append(zombie)
-        return killed
-
-    def _is_armor_break(self, old_zombie, current_zombies):
-        if old_zombie["name"] not in ("Zombie_cone", "Zombie_bucket"):
-            return False
-        for zombie in current_zombies.values():
-            if (
-                zombie["name"] == "Zombie"
-                and zombie["lane"] == old_zombie["lane"]
-                and zombie["pos"] == old_zombie["pos"]
-                and zombie["hp"] <= 190
-            ):
-                return True
-        return False
 
     def _calculate_potential(self):
         cfg = self.rewards.get("potential", {})

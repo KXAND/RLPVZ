@@ -178,15 +178,6 @@ def train_sim(
                           f"Steps {step_count:7d}  "
                           f"Mean R {mean_r:8.2f}  Mean I {mean_i:.2f}  Mean L {mean_l:.2f}")
 
-                if plot_freq and ep % plot_freq == 0:
-                    _save_training_artifacts(
-                        save_path,
-                        training_rewards,
-                        training_iterations,
-                        training_loss,
-                        plot_callback=plot_callback,
-                    )
-
                 if eval_scheduler.should_run(ep):
                     _run_and_save_eval(
                         network,
@@ -196,6 +187,15 @@ def train_sim(
                         step=step_count,
                     )
                     last_eval_episode = ep
+
+                if plot_freq and ep % plot_freq == 0:
+                    _save_training_artifacts(
+                        save_path,
+                        training_rewards,
+                        training_iterations,
+                        training_loss,
+                        plot_callback=plot_callback,
+                    )
 
                 if ep >= max_episodes:
                     print(f"\nEpisode limit reached ({max_episodes} episodes, {step_count} steps).")
@@ -223,6 +223,13 @@ def train_sim(
             episode=ep,
             step=step_count,
             force=True,
+        )
+        _save_training_artifacts(
+            save_path,
+            training_rewards,
+            training_iterations,
+            training_loss,
+            plot_callback=plot_callback,
         )
 
     if visualize:

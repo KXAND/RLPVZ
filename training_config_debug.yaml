@@ -1,0 +1,257 @@
+# PVZ AI Debug Training Configuration
+# Reward = zombie HP reduction per step (dense damage signal)
+# 1 step ≈ 1 second game time (frameskip=49, ~50fps → 50 frames/step)
+#
+# Usage:
+#   .\.venv\Scripts\python.exe train.py --training_config training_config_debug.yaml
+
+# =============================================================================
+# 游戏设置
+# =============================================================================
+game:
+  mode: "survival_day_endless"  # 生存无尽白天 — 持续出怪，适合调试
+  game_mode_id: 11              # mode 11 = 生存白天无尽
+  background_type: 0            # BACKGROUND_1_DAY
+  map: "day"                    # 草地 (5行)
+  rows: 5
+  cols: 9
+  initial_sun: 50
+  win_condition: "survival_sublevels"
+  target_sublevels: 1
+
+# =============================================================================
+# 卡槽配置 (完整10张卡)
+# =============================================================================
+cards:
+  slot_count: 10
+
+  plants:
+    - slot: 0
+      id: 1
+      name: "Sunflower"
+      cost: 50
+
+    - slot: 1
+      id: 0
+      name: "Peashooter"
+      cost: 100
+
+    - slot: 2
+      id: 5
+      name: "Snow Pea"
+      cost: 175
+
+    - slot: 3
+      id: 7
+      name: "Repeater"
+      cost: 200
+
+    - slot: 4
+      id: 3
+      name: "Wall-nut"
+      cost: 50
+
+    - slot: 5
+      id: 17
+      name: "Squash"
+      cost: 50
+      is_instant: true
+
+    - slot: 6
+      id: 2
+      name: "Cherry Bomb"
+      cost: 150
+      is_instant: true
+
+    - slot: 7
+      id: 21
+      name: "Spikeweed"
+      cost: 100
+
+    - slot: 8
+      id: 34
+      name: "Kernel-pult"
+      cost: 100
+
+    - slot: 9
+      id: 39
+      name: "Melon-pult"
+      cost: 300
+
+# =============================================================================
+# 动作空间
+# =============================================================================
+action_space:
+  type: "discrete"
+  size: 451
+
+  structure:
+    plant_actions: 450          # 10卡 × 45格
+    shovel_actions: 0
+    wait_action: 1
+
+# =============================================================================
+# 观测空间 (增强版 — 兼容 CNN 模型)
+# =============================================================================
+observation_space:
+  grid:
+    shape: [5, 9, 13]
+    channels:
+      - "plant_type"
+      - "plant_hp"
+      - "plant_function"
+      - "zombie_density"
+      - "zombie_hp"
+      - "zombie_threat"
+      - "zombie_urgency"
+      - "zombie_status"
+      - "bullet_density"
+      - "bullet_threat"
+      - "dps_heatmap"
+      - "threat_heatmap"
+      - "kill_heatmap"
+
+  global:
+    features:
+      - "sun"
+      - "sun_producing"
+      - "wave"
+      - "total_waves"
+      - "wave_countdown"
+      - "game_clock"
+      - "zombie_count"
+      - "zombie_total_hp"
+      - "plant_count"
+      - "lawnmower_status"
+      - "cards_cd_ratio"
+      - "cards_affordable"
+      - "row_threat"
+      - "row_defense"
+      - "huge_wave_countdown"
+      - "zombie_refresh_hp"
+      - "ice_trails"
+      - "next_wave_preview"
+    total_dim: 71
+
+  card_attributes:
+    shape: [10, 7]
+
+# =============================================================================
+# 奖励配置 — Debug 模式: 每步奖励 = 僵尸总血量减少量
+# =============================================================================
+rewards:
+  # ═══ Debug mode: 覆盖正常奖励计算 ═══
+  # reward = sum(上一步僵尸total_hp - 当前步僵尸total_hp)
+  # 即: 本步对僵尸造成的总伤害 (包含护甲)
+  debug_mode: "zombie_damage"
+
+  # 以下为常规奖励配置 (debug_mode 生效时被忽略)
+  zombie_kill:
+    use_type_rewards: false
+    default: 0.30
+    zombie: 0.30
+    flag: 0.30
+    conehead: 0.45
+    polevaulter: 0.50
+    buckethead: 0.70
+    newspaper: 0.40
+    screendoor: 0.60
+    football: 0.80
+    dancing: 0.50
+    backup: 0.30
+    duckytube: 0.30
+    snorkel: 0.45
+    bobsled: 0.45
+    dolphin: 0.55
+    jackinbox: 0.55
+    pogo: 0.55
+    yeti: 0.80
+    catapult: 0.75
+    imp: 0.30
+
+  sun_collect: 0.01
+  wave_complete: 4.0
+  game_win: 18.0
+  streak_bonus: 0.0
+  survival_per_step: 0.0
+
+  plant_sunflower: 0.10
+  plant_attacker: 0.35
+  plant_wall: 0.18
+  plant_lilypad: 0.4
+  plant_pumpkin: 0.1
+  plant_other: 0.3
+
+  plant_lost: -0.25
+  sunflower_lost: -0.80
+  lawnmower_triggered: -50.0
+  game_lose: -12.0
+  invalid_action: -0.01
+  wait_with_sun: -0.02
+
+  coverage:
+    scale: 0.0
+  proximity:
+    scale: 0.0
+
+  potential:
+    sun_scale: 0.06
+    sun_cap: 300.0
+    plant_scale: 0.22
+    spread_bonus: 0.06
+    lawnmower_scale: 0.35
+    zombie_threat_scale: 0.35
+    zombie_distance_bonus: 0.75
+    wave_scale: 0.05
+    delta_scale: 0.0            # 关闭势能塑形，只用纯伤害信号
+
+# =============================================================================
+# 课程学习 — 关闭，直接使用完整配置
+# =============================================================================
+metric_window: 30
+
+# =============================================================================
+# 训练配置
+# =============================================================================
+training:
+  args:
+    algo: "ddqn"
+    port: 12345
+    num_envs: 2
+    base_port: 12345
+    ports: ""
+    pids: ""
+    auto_start: true
+    game_path: "gameobj/PlantsVsZombies.exe"
+    wait_time: 3.0
+    speed: 10.0
+    frameskip: 49               # 跳过49帧 → 50帧/步 ≈ 1秒游戏时间/步
+    auto_resume: true
+    env_console_log_level: 0
+    file_log_level: 1
+    execution: "async_worker_pool"
+    curriculum: "none"          # 关闭课程学习，纯调试
+
+    ddqn_paper_observation: false  # 使用增强观测，兼容 CNN 模型
+
+  ddqn:
+    ddqn_episodes: 100000
+    ddqn_gamma: 0.99
+    ddqn_batch_size: 500        # 大批次，提高梯度稳定性
+    ddqn_buffer_size: 100000    # 大缓冲区
+    ddqn_burn_in: 10000
+    ddqn_hidden_sizes: [2048, 1024]
+    ddqn_lr: 0.001
+    ddqn_update_freq: 32
+    ddqn_sync_freq: 2000
+    ddqn_eval_freq: 100
+    ddqn_eval_iters: 5
+    ddqn_checkpoint_freq: 500
+    ddqn_plot_freq: 20
+    ddqn_plot_path: null
+    ddqn_save_path: null
+    ddqn_load_path: null
+
+  env:
+    max_steps: 10000
+    normalize_obs: true

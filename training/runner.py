@@ -69,7 +69,7 @@ class TrainRunner:
                 context.artifacts.close()
                 terminate_pvz_processes(
                     context.game_instances,
-                    auto_start=not getattr(self.args, "no_auto_start", False),
+                    auto_start=getattr(self.args, "auto_start", True),
                 )
 
         if interrupted:

@@ -2,6 +2,7 @@
 
 import gc
 import os
+import signal
 from datetime import datetime
 import numpy as np
 import torch
@@ -111,10 +112,31 @@ def train_sim(
     step_count = 0
     window = 100
     last_eval_episode = None
+    saved_on_interrupt = False
+    stop_requested = False
+    previous_sigint_handler = signal.getsignal(signal.SIGINT)
+
+    def _handle_interrupt(signum, frame):
+        nonlocal saved_on_interrupt, stop_requested
+        stop_requested = True
+        signal.signal(signal.SIGINT, previous_sigint_handler)
+        if not saved_on_interrupt:
+            saved_on_interrupt = True
+            print("\nTraining interrupted. Saving current model...")
+            _save_training_checkpoint(
+                save_path,
+                network,
+                training_rewards,
+                training_iterations,
+                training_loss,
+                plot_callback=plot_callback,
+            )
+
+    signal.signal(signal.SIGINT, _handle_interrupt)
 
     print(f"Burn-in ({burn_in} steps)...")
     s_0 = transform_observation(env.reset())
-    while buffer.burn_in_capacity() < 1:
+    while buffer.burn_in_capacity() < 1 and not stop_requested:
         mask = np.array(env.mask_available_actions())
         if np.random.random() < 0.5:
             action = env.wait_action
@@ -128,6 +150,10 @@ def train_sim(
         if done:
             s_0 = transform_observation(env.reset())
         step_count += 1
+    if stop_requested:
+        print(f"Training stopped during burn-in at {step_count} steps.")
+        signal.signal(signal.SIGINT, previous_sigint_handler)
+        return
     print(f"Burn-in done. Buffer: {len(buffer.replay_memory)}  "
           f"(steps so far: {step_count})")
 
@@ -135,10 +161,10 @@ def train_sim(
     s_0 = transform_observation(env.reset())
     print(f"Training {max_episodes} episodes...")
 
-    while ep < max_episodes:
+    while ep < max_episodes and not stop_requested:
         rewards = 0
         done = False
-        while not done:
+        while not done and not stop_requested:
             epsilon = threshold.epsilon(ep)
             mask = np.array(env.mask_available_actions())
             action = network.decide_action(s_0, mask, epsilon=epsilon)
@@ -203,11 +229,14 @@ def train_sim(
 
                 s_0 = transform_observation(env.reset())
 
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    torch.save(network.state_dict(), save_path)
-    print(f"Saved model to {save_path}")
-    _save_training_artifacts(
+    if stop_requested:
+        print(f"Training stopped at episode {ep}, step {step_count}.")
+        signal.signal(signal.SIGINT, previous_sigint_handler)
+        return
+
+    _save_training_checkpoint(
         save_path,
+        network,
         training_rewards,
         training_iterations,
         training_loss,
@@ -234,6 +263,8 @@ def train_sim(
 
     if visualize:
         _visualize_episode(env, network)
+
+    signal.signal(signal.SIGINT, previous_sigint_handler)
 
 
 def _print_config(**cfg):
@@ -264,6 +295,26 @@ def _print_config(**cfg):
     print(f"  {'Max frames:':24s} {ec['max_frames']} ({ec['max_frames'] // ec['fps']}s game time)")
     print(f"  {'Plant deck:':24s} {', '.join(ec['plants'])}")
     print(f"{sep}\n")
+
+
+def _save_training_checkpoint(
+    save_path,
+    network,
+    training_rewards,
+    training_iterations,
+    training_loss,
+    plot_callback=None,
+):
+    os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+    torch.save(network.state_dict(), save_path)
+    print(f"Saved model to {save_path}")
+    _save_training_artifacts(
+        save_path,
+        training_rewards,
+        training_iterations,
+        training_loss,
+        plot_callback=plot_callback,
+    )
 
 
 def _save_training_artifacts(

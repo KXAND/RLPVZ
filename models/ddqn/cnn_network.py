@@ -1,7 +1,9 @@
 """CNN-based Q-Network for DDQN with dual-branch grid processing.
 
 3x3 branch: captures local spatial patterns (adjacent cell interactions).
-1x9 branch: captures full-row patterns (entire row defense/offense balance).
+1x9 branch: captures full-row patterns (entire row defence/offence balance).
+Both branches use MaxPool2d after every conv to reduce spatial dims and
+shift parameters from FC layers into deeper CNN channels.
 Global features (sun + cooldowns) bypass CNN and merge after grid encoding.
 """
 
@@ -13,7 +15,7 @@ import torch.nn as nn
 class CNNQNetwork(nn.Module):
     def __init__(self, env, learning_rate=1e-3, device="cpu",
                  hidden_sizes=None, n_inputs_override=None,
-                 create_optimizer=True):
+                 create_optimizer=True, use_factored: bool = False):
         super().__init__()
         self.device = device
         self.rows = env.rows
@@ -22,62 +24,105 @@ class CNNQNetwork(nn.Module):
         self.n_outputs = env.action_space.n
         self.actions = np.arange(env.action_space.n)
         self.learning_rate = learning_rate
+        self._use_factored = use_factored
+        self._n_cells = self.rows * self.cols  # 45
+        self._n_cards = self.num_cards          # 10
 
         # ── derived dims ──────────────────────────────────────────
         n_grid_channels = self.num_cards + 1 + 2   # one-hot(11) + plantHP(1) + zombieHP(1)
         n_global = 1 + self.num_cards               # sun(1) + cooldowns(10)
         self._n_grid_channels = n_grid_channels
         self._n_global = n_global
-        self._grid_size = self.rows * self.cols
 
-        # ── 3×3 spatial branch ────────────────────────────────────
+        # ── 3x3 spatial branch ────────────────────────────────────
+        # Input  (5, 9)
+        # Conv1 + MaxPool(2,2) → (3, 5)   [ceil_mode]
+        # Conv2 + MaxPool(2,2) → (2, 3)
+        # Conv3 + MaxPool(2,2) → (1, 2)
         self.branch_3x3 = nn.Sequential(
-            nn.Conv2d(n_grid_channels, 64, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(n_grid_channels, 256, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(256),
             nn.ReLU(inplace=True),
-            nn.Conv2d(64, 128, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(128, 128, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-        )
-        _3x3_flat = self.rows * self.cols * 128  # 5×9×128 = 5760
+            nn.MaxPool2d(2, 2, ceil_mode=True),
 
-        # ── 1×9 row branch ────────────────────────────────────────
-        self.branch_1x9 = nn.Sequential(
-            nn.Conv2d(n_grid_channels, 64, kernel_size=(1, 9), padding=0, bias=False),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(256, 512, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(512),
             nn.ReLU(inplace=True),
-            nn.Conv2d(64, 128, kernel_size=1, bias=False),
-            nn.BatchNorm2d(128),
+            nn.MaxPool2d(2, 2, ceil_mode=True),
+
+            nn.Conv2d(512, 512, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(512),
             nn.ReLU(inplace=True),
-            nn.Conv2d(128, 128, kernel_size=(3, 1), bias=False),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2, 2, ceil_mode=True),
         )
-        _1x9_flat = 3 * 1 * 128  # (3,1,128) = 384
+        _3x3_flat = 1 * 2 * 512  # 1024
+
+        # ── 1x9 row branch ────────────────────────────────────────
+        # Input  (5, 9)
+        # Conv(1,9) → (5, 1)  then MaxPool(2,1) → (3, 1)
+        # Conv(1,1) → (3, 1)  then MaxPool(2,1) → (2, 1)
+        # Conv(1,1) → (2, 1)  then MaxPool(2,1) → (1, 1)
+        self.branch_1x9 = nn.Sequential(
+            nn.Conv2d(n_grid_channels, 128, kernel_size=(1, 9), bias=False),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d((2, 1), ceil_mode=True),
+
+            nn.Conv2d(128, 256, kernel_size=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d((2, 1), ceil_mode=True),
+
+            nn.Conv2d(256, 256, kernel_size=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d((2, 1), ceil_mode=True),
+        )
+        _1x9_flat = 1 * 1 * 256  # 256
 
         # ── grid merge ────────────────────────────────────────────
-        grid_out = _3x3_flat + _1x9_flat  # 6144
+        grid_out = _3x3_flat + _1x9_flat  # 1280
         self.grid_proj = nn.Sequential(
-            nn.Linear(grid_out, 896),
+            nn.Linear(grid_out, 1024),
             nn.ReLU(inplace=True),
             nn.Dropout(0.1),
         )
 
         # ── global branch ─────────────────────────────────────────
         self.global_proj = nn.Sequential(
-            nn.Linear(n_global, 64),
+            nn.Linear(n_global, 128),
             nn.ReLU(inplace=True),
         )
 
         # ── output head ───────────────────────────────────────────
-        self.head = nn.Sequential(
-            nn.Linear(896 + 64, 256),
-            nn.ReLU(inplace=True),
-            nn.Linear(256, self.n_outputs),
-        )
+        shared_dim = 1024 + 128  # 1152
+        if use_factored:
+            # Factored heads: wait(1) + position(45) + card(10) = 56
+            shared = nn.Sequential(
+                nn.Linear(shared_dim, 512),
+                nn.ReLU(inplace=True),
+            )
+            self.head_wait = nn.Sequential(
+                shared,
+                nn.Linear(512, 1),
+            )
+            self.head_pos = nn.Sequential(
+                nn.Linear(shared_dim, 256),
+                nn.ReLU(inplace=True),
+                nn.Linear(256, self._n_cells),   # 45
+            )
+            self.head_card = nn.Sequential(
+                nn.Linear(shared_dim, 128),
+                nn.ReLU(inplace=True),
+                nn.Linear(128, self._n_cards),   # 10
+            )
+            self.head = None  # factored heads replace the monolithic head
+        else:
+            self.head = nn.Sequential(
+                nn.Linear(shared_dim, 768),
+                nn.ReLU(inplace=True),
+                nn.Linear(768, self.n_outputs),
+            )
 
         if device == "cuda":
             self.cuda()
@@ -93,28 +138,32 @@ class CNNQNetwork(nn.Module):
         """x: (batch, 596) flat observation vector."""
         bsz = x.shape[0]
 
-        # Split: first n_global dims = global, rest = grid
-        glob = x[:, :self._n_global]                         # (B, 11)
-        grid_flat = x[:, self._n_global:]                     # (B, 585)
+        glob_ = x[:, :self._n_global]
+        grid_flat = x[:, self._n_global:]
 
-        # Reshape grid to (B, rows, cols, channels) -> (B, C, H, W)
         grid = grid_flat.view(bsz, self.rows, self.cols, self._n_grid_channels)
         grid = grid.permute(0, 3, 1, 2).contiguous()          # (B, 13, 5, 9)
 
-        # CNN branches
-        feat_3x3 = self.branch_3x3(grid).reshape(bsz, -1)     # (B, 5760)
-        feat_1x9 = self.branch_1x9(grid).reshape(bsz, -1)     # (B, 384)
+        feat_3x3 = self.branch_3x3(grid).reshape(bsz, -1)
+        feat_1x9 = self.branch_1x9(grid).reshape(bsz, -1)
 
-        # Merge grid features
-        grid_feat = self.grid_proj(torch.cat([feat_3x3, feat_1x9], dim=1))  # (B, 896)
+        grid_feat = self.grid_proj(torch.cat([feat_3x3, feat_1x9], dim=1))
+        glob_feat = self.global_proj(glob_)
+        shared = torch.cat([grid_feat, glob_feat], dim=1)  # (B, 1152)
 
-        # Global features
-        glob_feat = self.global_proj(glob)                    # (B, 64)
+        if self._use_factored:
+            q_wait = self.head_wait(shared)                      # (B, 1)
+            q_pos  = self.head_pos(shared)                       # (B, 45)
+            q_card = self.head_card(shared)                      # (B, 10)
 
-        # Full merge → Q-values
-        return self.head(torch.cat([grid_feat, glob_feat], dim=1))  # (B, 451)
+            # Outer sum: Q(card, cell) = q_card[card] + q_pos[cell]
+            q_plant = q_card.unsqueeze(-1) + q_pos.unsqueeze(-2)  # (B, 10, 45)
+            q_plant = q_plant.reshape(bsz, 450)                   # (B, 450)
+            return torch.cat([q_plant, q_wait], dim=-1)           # (B, 451)
+        else:
+            return self.head(shared)                              # (B, 451)
 
-    # ── DDQN interface (same as QNetwork) ──────────────────────────
+    # ── DDQN interface ─────────────────────────────────────────────
     def decide_action(self, state, mask, epsilon):
         if np.random.random() < epsilon:
             valid_actions = self.actions[np.asarray(mask, dtype=bool)]
@@ -132,7 +181,7 @@ class CNNQNetwork(nn.Module):
         if isinstance(state, (list, tuple)):
             state = np.array(state)
         if state.ndim == 1:
-            state = state[np.newaxis, :]       # add batch dim
+            state = state[np.newaxis, :]
         state_t = torch.as_tensor(state, dtype=torch.float32, device=self.device)
         qvals = self.forward(state_t)
         if qvals.shape[0] == 1:

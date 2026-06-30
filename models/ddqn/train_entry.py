@@ -68,15 +68,18 @@ def _print_network_summary(network, use_paper, hidden_sizes, device):
     trainable_params = sum(p.numel() for p in network.parameters() if p.requires_grad)
 
     is_cnn = hasattr(network, '_n_grid_channels')
+    is_factored = getattr(network, '_use_factored', False)
 
     print(f"\n{'='*60}")
-    print(f"  DDQN Network Summary{' (CNN)' if is_cnn else ''}")
+    print(f"  DDQN Network Summary{' (CNN)' if is_cnn else ''}{' (Factored)' if is_factored else ''}")
     print(f"{'='*60}")
     print(f"  Device:        {device}")
     print(f"  Observation:   596 dim {'(paper format)' if use_paper else ''}")
     print(f"  Actions:       {n_outputs}")
+    if is_factored:
+        print(f"  Action heads:  wait(1) + pos(45) + card(10) = 56 → outer-sum → 451")
     if is_cnn:
-        print(f"  Architecture:  3x3-CNN + 1x9-CNN | global-MLP -> head")
+        print(f"  Architecture:  3x3-CNN + 1x9-CNN | global-MLP -> {'factored heads' if is_factored else 'head'}")
     else:
         hidden_str = " -> ".join(str(h) for h in (hidden_sizes or [256, 128]))
         print(f"  Hidden layers: {hidden_str}")
@@ -192,10 +195,12 @@ class DDQNAlgorithm:
         use_cnn = getattr(context.args, "use_cnn", False)
         if use_cnn:
             from .cnn_network import CNNQNetwork
+            use_factored = getattr(context.args, "use_factored", False)
             network = CNNQNetwork(
                 env,
                 learning_rate=context.args.ddqn_lr,
                 device=device,
+                use_factored=use_factored,
             )
         else:
             network = QNetwork(

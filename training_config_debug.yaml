@@ -1,101 +1,114 @@
 # PVZ AI Debug Training Configuration
-# Reward = zombie HP reduction per step (dense damage signal)
-# 1 step ≈ 1 second game time (frameskip=49, ~50fps → 50 frames/step)
+# Based on baseline (paper spec), with zombie-damage reward for dense learning signal.
+#
+# Differences from baseline:
+#   - rewards.debug_mode: "zombie_damage"  (reward = zombie HP reduction per step)
+#   - frameskip: 49                        (1 step ≈ 1 sec game time)
+#   - ddqn_batch_size: 500                 (larger batch for stable gradients)
+#   - ddqn_buffer_size: 100000             (larger replay buffer)
 #
 # Usage:
 #   .\.venv\Scripts\python.exe train.py --training_config training_config_debug.yaml
 
 # =============================================================================
-# 游戏设置
+# Game Settings — Survival: Day  (same as baseline)
 # =============================================================================
 game:
-  mode: "survival_day_endless"  # 生存无尽白天 — 持续出怪，适合调试
-  game_mode_id: 11              # mode 11 = 生存白天无尽
-  background_type: 0            # BACKGROUND_1_DAY
-  map: "day"                    # 草地 (5行)
-  rows: 5
-  cols: 9
+  mode: "survival_day"           # 生存模式(白天)
+  game_mode_id: 1                # GAMEMODE_SURVIVAL_NORMAL_STAGE_1 = 生存白天
+  background_type: 0             # BACKGROUND_DAY
+  map: "day"                     # 草地 (5 rows, no pool)
+  rows: 5                        # 5 rows
+  cols: 9                        # 9 columns
   initial_sun: 50
-  win_condition: "survival_sublevels"
-  target_sublevels: 1
 
 # =============================================================================
-# 卡槽配置 (完整10张卡)
+# Card Loadout — exactly matching paper Table 4  (same as baseline)
 # =============================================================================
 cards:
   slot_count: 10
 
   plants:
+    # Slot 0: Sunflower (economy)
     - slot: 0
       id: 1
       name: "Sunflower"
       cost: 50
 
+    # Slot 1: Peashooter (basic offense)
     - slot: 1
       id: 0
       name: "Peashooter"
       cost: 100
 
+    # Slot 2: Potato Mine (trap)
     - slot: 2
-      id: 5
-      name: "Snow Pea"
-      cost: 175
+      id: 4
+      name: "Potato Mine"
+      cost: 25
 
+    # Slot 3: Wall-nut (defense)
     - slot: 3
-      id: 7
-      name: "Repeater"
-      cost: 200
-
-    - slot: 4
       id: 3
       name: "Wall-nut"
       cost: 50
 
+    # Slot 4: Repeater (double damage)
+    - slot: 4
+      id: 7
+      name: "Repeater"
+      cost: 200
+
+    # Slot 5: Squash (instant kill)
     - slot: 5
       id: 17
       name: "Squash"
       cost: 50
-      is_instant: true
 
+    # Slot 6: Cherry Bomb (AOE instant)
     - slot: 6
       id: 2
       name: "Cherry Bomb"
       cost: 150
-      is_instant: true
 
+    # Slot 7: Snow Pea (slow)
     - slot: 7
-      id: 21
-      name: "Spikeweed"
-      cost: 100
+      id: 5
+      name: "Snow Pea"
+      cost: 175
 
+    # Slot 8: Melon-pult (AOE damage)
     - slot: 8
-      id: 34
-      name: "Kernel-pult"
-      cost: 100
-
-    - slot: 9
       id: 39
       name: "Melon-pult"
       cost: 300
 
+    # Slot 9: Spikeweed (ground trap)
+    - slot: 9
+      id: 21
+      name: "Spikeweed"
+      cost: 100
+
 # =============================================================================
-# 动作空间
+# Action Space — 10 cards × 5 rows × 9 cols + 1 wait = 451  (same as baseline)
 # =============================================================================
 action_space:
   type: "discrete"
   size: 451
 
   structure:
-    plant_actions: 450          # 10卡 × 45格
-    shovel_actions: 0
+    plant_actions: 450          # 10 cards × 45 cells
+    shovel_actions: 0           # disabled
     wait_action: 1
 
 # =============================================================================
-# 观测空间 (增强版 — 兼容 CNN 模型)
+# Observation Space — matches paper's 596-dim flat vector spec  (same as baseline)
+# Grid channels: 13-channel grid (used by PPO / PVZEnv internally)
+# DDQN adapter will extract paper-format: plant one-hot + HP + zombie HP + sun + cooldown
 # =============================================================================
 observation_space:
   grid:
-    shape: [5, 9, 13]
+    shape: [5, 9, 13]           # 5 rows × 9 cols × 13 channels
     channels:
       - "plant_type"
       - "plant_hp"
@@ -131,93 +144,76 @@ observation_space:
       - "zombie_refresh_hp"
       - "ice_trails"
       - "next_wave_preview"
-    total_dim: 71
+    total_dim: 65
 
   card_attributes:
     shape: [10, 7]
 
 # =============================================================================
-# 奖励配置 — Debug 模式: 每步奖励 = 僵尸总血量减少量
+# Reward — sparse config matching baseline, with debug override
 # =============================================================================
 rewards:
-  # ═══ Debug mode: 覆盖正常奖励计算 ═══
-  # reward = sum(上一步僵尸total_hp - 当前步僵尸total_hp)
-  # 即: 本步对僵尸造成的总伤害 (包含护甲)
+  # ═══ Debug mode: reward = zombie total_hp reduction per step ═══
   debug_mode: "zombie_damage"
 
-  # 以下为常规奖励配置 (debug_mode 生效时被忽略)
+  # Below matches baseline exactly (ignored when debug_mode is active)
   zombie_kill:
-    use_type_rewards: false
-    default: 0.30
-    zombie: 0.30
-    flag: 0.30
-    conehead: 0.45
-    polevaulter: 0.50
-    buckethead: 0.70
-    newspaper: 0.40
-    screendoor: 0.60
-    football: 0.80
-    dancing: 0.50
-    backup: 0.30
-    duckytube: 0.30
-    snorkel: 0.45
-    bobsled: 0.45
-    dolphin: 0.55
-    jackinbox: 0.55
-    pogo: 0.55
-    yeti: 0.80
-    catapult: 0.75
-    imp: 0.30
-
-  sun_collect: 0.01
-  wave_complete: 4.0
-  game_win: 18.0
-  streak_bonus: 0.0
-  survival_per_step: 0.0
-
-  plant_sunflower: 0.10
-  plant_attacker: 0.35
-  plant_wall: 0.18
-  plant_lilypad: 0.4
-  plant_pumpkin: 0.1
-  plant_other: 0.3
-
-  plant_lost: -0.25
-  sunflower_lost: -0.80
-  lawnmower_triggered: -50.0
-  game_lose: -12.0
-  invalid_action: -0.01
-  wait_with_sun: -0.02
+    use_type_rewards: true
+    default: 0.3
+    zombie: 0.2
+    flag: 0.2
+    conehead: 0.3
+    polevaulter: 0.5
+    buckethead: 0.6
+    newspaper: 0.3
+    screendoor: 0.6
+    football: 0.8
+    dancing: 0.5
+    backup: 0.2
+    duckytube: 0.2
+    snorkel: 0.4
+    bobsled: 0.4
+    dolphin: 0.5
+    jackinbox: 0.5
+    pogo: 0.5
+    yeti: 0.8
+    catapult: 0.7
+    imp: 0.2
 
   coverage:
     scale: 0.0
   proximity:
     scale: 0.0
 
+  sun_collect: 0.0
+  wave_complete: 0.0
+  game_win: 0.0
+  streak_bonus: 0.0
+  survival_per_step: 0.0
+  plant_sunflower: 0.0
+  plant_attacker: 0.0
+  plant_wall: 0.0
+  plant_lilypad: 0.0
+  plant_pumpkin: 0.0
+  plant_other: 0.0
+  plant_lost: 0.0
+  sunflower_lost: 0.0
+  lawnmower_triggered: 0.0
+  game_lose: 0.0
+  invalid_action: 0.0
+  wait_with_sun: 0.0
+
   potential:
-    sun_scale: 0.06
-    sun_cap: 300.0
-    plant_scale: 0.22
-    spread_bonus: 0.06
-    lawnmower_scale: 0.35
-    zombie_threat_scale: 0.35
-    zombie_distance_bonus: 0.75
-    wave_scale: 0.05
-    delta_scale: 0.0            # 关闭势能塑形，只用纯伤害信号
+    delta_scale: 0.0
 
 # =============================================================================
-# 课程学习 — 关闭，直接使用完整配置
-# =============================================================================
-metric_window: 30
-
-# =============================================================================
-# 训练配置
+# Training Configuration  (same as baseline except batch/buffer/frameskip)
 # =============================================================================
 training:
   args:
     algo: "ddqn"
     port: 12345
-    num_envs: 2
+    num_envs: 1
     base_port: 12345
     ports: ""
     pids: ""
@@ -225,32 +221,35 @@ training:
     game_path: "gameobj/PlantsVsZombies.exe"
     wait_time: 3.0
     speed: 10.0
-    frameskip: 49               # 跳过49帧 → 50帧/步 ≈ 1秒游戏时间/步
+    frameskip: 49               # DEBUG: 1 step ≈ 1 sec game time (baseline: 24)
     auto_resume: true
     env_console_log_level: 0
     file_log_level: 1
     execution: "async_worker_pool"
-    curriculum: "none"          # 关闭课程学习，纯调试
+    curriculum: "none"
 
-    ddqn_paper_observation: false  # 使用增强观测，兼容 CNN 模型
+    # Paper observation format (one-hot + HP) — same as baseline
+    ddqn_paper_observation: true
 
   ddqn:
-    ddqn_episodes: 100000
-    ddqn_gamma: 0.99
-    ddqn_batch_size: 500        # 大批次，提高梯度稳定性
-    ddqn_buffer_size: 100000    # 大缓冲区
-    ddqn_burn_in: 10000
-    ddqn_hidden_sizes: [2048, 1024]
-    ddqn_lr: 0.001
+    ddqn_episodes: 10000        # same as baseline
+    ddqn_gamma: 0.99            # same as baseline
+    ddqn_batch_size: 500        # DEBUG: larger batch (baseline: 32)
+    ddqn_buffer_size: 100000    # DEBUG: larger buffer (baseline: 50000)
+    ddqn_burn_in: 10000         # same as baseline
+    ddqn_lr: 0.001              # same as baseline
     ddqn_update_freq: 32
-    ddqn_sync_freq: 2000
+    ddqn_sync_freq: 2000        # same as baseline
     ddqn_eval_freq: 100
     ddqn_eval_iters: 5
     ddqn_checkpoint_freq: 500
-    ddqn_plot_freq: 20
+    ddqn_plot_freq: 50
     ddqn_plot_path: null
     ddqn_save_path: null
     ddqn_load_path: null
+
+    # Paper network architecture: 2 hidden layers of 2048 each  (same as baseline)
+    ddqn_hidden_sizes: [2048, 2048]
 
   env:
     max_steps: 10000

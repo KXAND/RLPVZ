@@ -14,6 +14,7 @@ from simenv.model import (
     ReplayBuffer, DDQNNetwork, transform_observation, calculate_loss,
 )
 from training.evaluation import (
+    BestEvaluationCheckpoint,
     EpisodeEvalResult,
     EvaluationConfig,
     EvaluationScheduler,
@@ -68,6 +69,10 @@ def train_sim(
     eval_writer = EvaluationWriter(
         output_dir,
         save_episode_details=eval_config.save_episode_details,
+    )
+    best_eval_checkpoint = BestEvaluationCheckpoint(
+        output_dir,
+        model_filename="best_model.pt",
     )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -209,6 +214,7 @@ def train_sim(
                         network,
                         eval_writer,
                         eval_config,
+                        best_eval_checkpoint=best_eval_checkpoint,
                         episode=ep,
                         step=step_count,
                     )
@@ -249,6 +255,7 @@ def train_sim(
             network,
             eval_writer,
             eval_config,
+            best_eval_checkpoint=best_eval_checkpoint,
             episode=ep,
             step=step_count,
             force=True,
@@ -344,6 +351,7 @@ def _run_and_save_eval(
     network,
     eval_writer,
     eval_config,
+    best_eval_checkpoint=None,
     episode=None,
     step=None,
     force=False,
@@ -353,6 +361,13 @@ def _run_and_save_eval(
     result = _evaluate(network, n_episodes=eval_config.episodes,
                        episode=episode, step=step)
     eval_writer.write(result)
+    if best_eval_checkpoint is not None:
+        saved_path = best_eval_checkpoint.maybe_save(
+            result,
+            lambda path: torch.save(network.state_dict(), path),
+        )
+        if saved_path is not None:
+            print(f"[Eval] New best model saved to {saved_path}")
     return result
 
 

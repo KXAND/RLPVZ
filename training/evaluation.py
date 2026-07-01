@@ -153,6 +153,50 @@ class EvaluationWriter:
                 )
 
 
+class BestEvaluationCheckpoint:
+    def __init__(self, output_dir: str, model_filename: str = "best_model.pt"):
+        self.output_dir = output_dir
+        self.model_path = os.path.join(output_dir, model_filename)
+        self.metadata_path = os.path.join(output_dir, "best_eval.json")
+        self.best_score = self._load_best_score()
+
+    def maybe_save(self, result: EvaluationResult, save_model) -> str | None:
+        score = evaluation_score(result)
+        if self.best_score is not None and score <= self.best_score:
+            return None
+
+        os.makedirs(self.output_dir, exist_ok=True)
+        save_model(self.model_path)
+        self.best_score = score
+        metadata = _summary_row(result)
+        metadata["best_score"] = list(score)
+        metadata["saved_model_path"] = self.model_path
+        with open(self.metadata_path, "w", encoding="utf-8") as file:
+            json.dump(metadata, file, ensure_ascii=False, indent=2)
+        return self.model_path
+
+    def _load_best_score(self) -> tuple[float, float, float] | None:
+        if not os.path.exists(self.metadata_path):
+            return None
+        try:
+            with open(self.metadata_path, "r", encoding="utf-8") as file:
+                metadata = json.load(file)
+            score = metadata.get("best_score")
+            if not isinstance(score, list) or len(score) != 3:
+                return None
+            return (float(score[0]), float(score[1]), float(score[2]))
+        except Exception:
+            return None
+
+
+def evaluation_score(result: EvaluationResult) -> tuple[float, float, float]:
+    return (
+        float(result.win_rate),
+        float(result.survival_mean),
+        float(result.reward_mean),
+    )
+
+
 def load_evaluation_config(raw: dict[str, Any] | None) -> EvaluationConfig:
     raw = raw or {}
     return EvaluationConfig(

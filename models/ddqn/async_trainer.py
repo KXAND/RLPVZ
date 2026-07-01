@@ -2,8 +2,9 @@ import queue
 import os
 
 import numpy as np
+import torch
 
-from training.evaluation import EvaluationScheduler
+from training.evaluation import BestEvaluationCheckpoint, EvaluationScheduler
 from training.metrics import load_metric_events, load_training_snapshot
 from utils.train_utils import get_current_stage_name, load_training_config
 
@@ -120,6 +121,7 @@ class AsyncDDQNTrainer:
             1, int(getattr(args, "ddqn_plot_freq", 20))
         )  # rate-limit snapshot emission
         self._last_snapshot_ep = 0
+        self.best_eval_checkpoint = None
 
     def train(
         self,
@@ -339,6 +341,17 @@ class AsyncDDQNTrainer:
                 stage_name=stage_name,
             )
             self.context.evaluation_writer.write(eval_result)
+            if self.best_eval_checkpoint is None:
+                self.best_eval_checkpoint = BestEvaluationCheckpoint(
+                    self.context.evaluation_writer.output_dir,
+                    model_filename="best_model.pt",
+                )
+            saved_path = self.best_eval_checkpoint.maybe_save(
+                eval_result,
+                lambda path: torch.save(self.learner.state_dict_cpu(), path),
+            )
+            if saved_path is not None:
+                print(f"[Eval] New best model saved to {saved_path}", flush=True)
             self.metric_emitter.emit_strict_eval(
                 eval_result, self.transition_count
             )

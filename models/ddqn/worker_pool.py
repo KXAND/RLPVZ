@@ -96,7 +96,6 @@ def _build_worker_env(args, instance, worker_id=None, env_spec=None, scenario_sp
     from envs import PVZEnv
     from .adapter import DDQNEnvAdapter
 
-    use_paper = bool(getattr(args, "ddqn_paper_observation", False))
     env = PVZEnv(
         config_path=args.training_config,
         hook_port=instance["port"],
@@ -109,10 +108,7 @@ def _build_worker_env(args, instance, worker_id=None, env_spec=None, scenario_sp
         scenario_spec=scenario_spec,
         worker_id=worker_id,
     )
-    return DDQNEnvAdapter(
-        env, env_spec=env_spec, scenario_spec=scenario_spec,
-        use_paper_observation=use_paper,
-    )
+    return DDQNEnvAdapter(env, env_spec=env_spec, scenario_spec=scenario_spec)
 
 
 def _drain_latest_weights(weights_queue):
@@ -178,12 +174,10 @@ def ddqn_worker_main(
     try:
         setup_worker_logging(args)
         env = _build_worker_env(args, instance, worker_id, env_spec, scenario_spec)
-        use_paper = bool(getattr(args, "ddqn_paper_observation", False))
         hidden_sizes = _parse_worker_hidden_sizes(args)
-        n_inputs_override = None
-        if use_paper:
-            from .adapter import paper_state_dim
-            n_inputs_override = paper_state_dim(env.rows, env.cols, env.num_cards)
+        from .adapter import typed_onehot_state_dim
+        n_inputs_override = typed_onehot_state_dim(
+            env.rows, env.cols, env.num_cards)
 
         use_cnn = getattr(args, "use_cnn", False)
         if use_cnn:

@@ -176,7 +176,6 @@ DDQN 特有参数：
 | `--ddqn_update_freq` | 32 | 网络更新频率 |
 | `--ddqn_sync_freq` | 2000 | Target 网络同步频率 |
 | `--ddqn_hidden_sizes` | 256,128 | 隐层大小（逗号分隔，baseline 为 2048,2048） |
-| `--ddqn_paper_observation` | false | 使用论文格式观测（one-hot + HP） |
 | `--ddqn_checkpoint_freq` | 500 | Checkpoint 保存频率（episode） |
 | `--ddqn_eval_freq` | 100 | 评估频率（episode） |
 

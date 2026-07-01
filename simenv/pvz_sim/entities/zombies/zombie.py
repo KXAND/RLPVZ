@@ -5,7 +5,7 @@ from ... import config
 class Zombie(Entity):
     MAX_HP = 270
     WALKING_SPEED = 80 / 23
-    ATTACK_SPEED = 143
+    ATTACK_SPEED = 100
     SCORE = 120
 
     def __init__(self, lane, pos=config.LANE_LENGTH - 1):

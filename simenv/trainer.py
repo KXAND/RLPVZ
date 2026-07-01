@@ -49,7 +49,7 @@ def train_sim(
     network_sync_freq=2000,
     save_path=None,
     eval_episodes=20,
-    eval_freq_episodes=500,
+    eval_freq_episodes=2500,
     visualize=False,
     plot_freq=100,
     plot_callback=None,

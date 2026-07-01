@@ -213,10 +213,22 @@ class DDQNAlgorithm:
         context.artifacts.network = network
 
         load_path = context.checkpoint.resolve_load_path()
+        restored_extra = None
         if load_path and os.path.exists(load_path):
             print(f"加载 DDQN 模型: {load_path}")
-            state_dict = torch.load(load_path, map_location=device, weights_only=True)
+            from .checkpoint import load_full_state
+            state_dict, restored_extra = load_full_state(load_path, device=device)
             network.load_state_dict(state_dict)
+            if restored_extra is not None:
+                print(
+                    "[DDQN] 完整状态恢复: "
+                    f"optimizer={'✓' if restored_extra.get('optimizer_state_dict') else '✗'}, "
+                    f"buffer={'✓' if restored_extra.get('buffer_data') else '✗'}, "
+                    f"ep={restored_extra.get('episode_count', 0)}",
+                    flush=True,
+                )
+            else:
+                print("[DDQN] 旧版 checkpoint (仅权重)，optimizer/buffer 从零开始")
 
         _print_network_summary(network, use_paper, hidden_sizes, device)
 
@@ -229,6 +241,7 @@ class DDQNAlgorithm:
             context=context,
             env_spec=context.env_spec,
             scenario_spec=context.scenario_spec,
+            restored_extra=restored_extra,
         )
 
         trainer.train(

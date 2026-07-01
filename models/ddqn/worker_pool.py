@@ -36,6 +36,7 @@ class DDQNWorkerPool(AsyncWorkerPool):
         initial_state_dict,
         env_spec=None,
         scenario_spec=None,
+        initial_global_episode: int = 0,
     ):
         self.args = args
         self.instances = instances
@@ -43,6 +44,7 @@ class DDQNWorkerPool(AsyncWorkerPool):
         self.initial_state_dict = initial_state_dict
         self.env_spec = env_spec
         self.scenario_spec = scenario_spec
+        self.initial_global_episode = initial_global_episode
 
         super().__init__(instances)
         self.transition_queue = self.make_queue(maxsize=max(2048, self.batch_size * 64))
@@ -65,6 +67,7 @@ class DDQNWorkerPool(AsyncWorkerPool):
                 self.stop_event,
                 self.env_spec,
                 self.scenario_spec,
+                self.initial_global_episode,
             ),
             label="DDQN",
         )
@@ -169,6 +172,7 @@ def ddqn_worker_main(
     stop_event,
     env_spec,
     scenario_spec,
+    initial_global_episode: int = 0,
 ):
     env = None
     try:
@@ -222,7 +226,7 @@ def ddqn_worker_main(
         episode_reward = 0.0
         local_episode = 0
 
-        global_episode = 0
+        global_episode = initial_global_episode
         while not stop_event.is_set():
             _consume_scenario_queue(env, scenario_queue)
             latest_weights = _drain_latest_weights(weights_queue)

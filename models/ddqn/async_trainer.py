@@ -28,6 +28,7 @@ class AsyncDDQNTrainer:
         context=None,
         env_spec=None,
         scenario_spec=None,
+        restored_extra=None,  # from load_full_state: {optimizer_state_dict, buffer_data, episode_count, ...}
     ):
         self.args = args
         self.instances = instances
@@ -59,6 +60,38 @@ class AsyncDDQNTrainer:
             (event.step or 0 for event in metric_events),
             default=0,
         )
+
+        # ── Restore optimizer state, replay buffer & episode count from checkpoint ──
+        if restored_extra is not None:
+            if restored_extra.get("optimizer_state_dict"):
+                self.learner.network.optimizer.load_state_dict(
+                    restored_extra["optimizer_state_dict"]
+                )
+                print(
+                    "[DDQN] optimizer 状态已恢复 (Adam m/v buffers)",
+                    flush=True,
+                )
+            if restored_extra.get("buffer_data"):
+                from .checkpoint import _deserialize_buffer
+                self.buffer = _deserialize_buffer(restored_extra["buffer_data"])
+                # Ensure buffer capacity matches current config
+                self.buffer.memory_size = self.args.ddqn_buffer_size
+                self.buffer.burn_in = self.args.ddqn_burn_in
+                print(
+                    f"[DDQN] replay buffer 已恢复: "
+                    f"{len(self.buffer.replay_memory)} entries",
+                    flush=True,
+                )
+            if restored_extra.get("episode_count", 0) > self.stats.episode_count:
+                print(
+                    f"[DDQN] episode_count 从 checkpoint 覆盖: "
+                    f"{self.stats.episode_count} → {restored_extra['episode_count']}",
+                    flush=True,
+                )
+                self.stats.episode_count = restored_extra["episode_count"]
+            if restored_extra.get("transition_count", 0) > self.transition_count:
+                self.transition_count = restored_extra["transition_count"]
+
         if self.stats.episode_count > 0:
             print(
                 f"[DDQN] 从 run 记录恢复: episodes={self.stats.episode_count}, "
@@ -96,6 +129,7 @@ class AsyncDDQNTrainer:
             initial_state_dict=self.learner.state_dict_cpu(),
             env_spec=self.env_spec,
             scenario_spec=self.scenario_spec,
+            initial_global_episode=self.stats.episode_count,
         )
         worker_pool.start()
 
@@ -213,6 +247,12 @@ class AsyncDDQNTrainer:
                 self.checkpoint.save(
                     network=self.network,
                     tag=f"episode_{self.stats.episode_count}",
+                    extra={
+                        "optimizer_state_dict": self.learner.network.optimizer.state_dict(),
+                        "buffer": self.buffer,
+                        "episode_count": self.stats.episode_count,
+                        "transition_count": self.transition_count,
+                    },
                 )
                 self.reporter.print_checkpoint(self.stats.episode_count)
 

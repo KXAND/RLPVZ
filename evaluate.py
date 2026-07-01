@@ -1,5 +1,6 @@
 import argparse
 import csv
+import json
 import os
 import shutil
 from datetime import datetime
@@ -70,10 +71,13 @@ def main(argv=None):
     writer.write(result)
     copied_model_path = _copy_model_to_eval_output(model_path, output_dir)
     plant_stats_path = _write_plant_stats(result, output_dir)
+    diagnostics_paths = _write_diagnostics(result, output_dir)
     _print_eval_result(result)
     print(f"Saved eval summary to {writer.csv_path}")
     if plant_stats_path:
         print(f"Saved plant stats to {plant_stats_path}")
+    if diagnostics_paths:
+        print(f"Saved diagnostics to {', '.join(diagnostics_paths)}")
     if copied_model_path:
         print(f"Copied eval model to {copied_model_path}")
 
@@ -151,7 +155,6 @@ def _write_plant_stats(result, output_dir):
         "count_total",
         "survival_steps_mean",
         "survival_steps_total",
-        "survival_unit",
     ]
     with open(path, "w", encoding="utf-8", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
@@ -162,6 +165,46 @@ def _write_plant_stats(result, output_dir):
         ):
             writer.writerow({field: item.get(field) for field in fieldnames})
     return path
+
+
+def _write_diagnostics(result, output_dir):
+    diagnostics = (result.extra or {}).get("diagnostics") or {}
+    if not diagnostics:
+        return None
+
+    os.makedirs(output_dir, exist_ok=True)
+    json_path = os.path.join(output_dir, "diagnostics.json")
+    with open(json_path, "w", encoding="utf-8") as file:
+        json.dump(diagnostics, file, ensure_ascii=False, indent=2)
+
+    csv_path = os.path.join(output_dir, "diagnostics.csv")
+    fieldnames = [
+        "episode_index",
+        "wait_actions",
+        "plant_actions",
+        "shovel_actions",
+        "invalid_actions",
+        "zombies_killed",
+        "plants_lost",
+        "final_sun",
+        "max_sun",
+        "mean_sun",
+        "sun_gained",
+        "sun_spent",
+        "wait_with_high_sun",
+        "reward_breakdown",
+    ]
+    with open(csv_path, "w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        for item in diagnostics.get("per_episode", []):
+            row = {field: item.get(field) for field in fieldnames}
+            row["reward_breakdown"] = json.dumps(
+                row.get("reward_breakdown") or {},
+                ensure_ascii=False,
+            )
+            writer.writerow(row)
+    return [json_path, csv_path]
 
 
 def _print_eval_metadata(args, model_path, output_dir, episodes,
@@ -206,8 +249,32 @@ def _print_eval_result(result):
     print(f"  {'Win rate:':20s} {result.win_count}/{result.episodes} "
           f"({100 * result.win_rate:.1f}%)")
     print(f"  {'Duration:':20s} {result.duration_sec:.2f}s")
+    _print_eval_diagnostics(result)
     _print_plant_stats(result)
     print(f"{sep}\n")
+
+
+def _print_eval_diagnostics(result):
+    diagnostics = (result.extra or {}).get("diagnostics") or {}
+    if not diagnostics:
+        return
+
+    rows = diagnostics.get("per_episode", [])
+    if not rows:
+        return
+
+    print(f"  {'Episode diagnostics:':20s}")
+    for item in rows:
+        print(
+            f"    episode={int(item.get('episode_index', 0)):3d}  "
+            f"actions(wait={int(item.get('wait_actions', 0))}, "
+            f"plant={int(item.get('plant_actions', 0))}, "
+            f"shovel={int(item.get('shovel_actions', 0))}, "
+            f"invalid={int(item.get('invalid_actions', 0))})  "
+            f"killed={int(item.get('zombies_killed', 0))}  "
+            f"lost={int(item.get('plants_lost', 0))}  "
+            f"rewards={_format_top_items(item.get('reward_breakdown', {}), precision=1)}"
+        )
 
 
 def _print_plant_stats(result):
@@ -225,9 +292,21 @@ def _print_plant_stats(result):
             f"    {item.get('name', item.get('plant_id')):18s} "
             f"count={int(item.get('count_total', 0)):4d}  "
             f"mean_survival_steps={float(item.get('survival_steps_mean', 0.0)):8.2f}  "
-            f"total_survival_steps={float(item.get('survival_steps_total', 0.0)):8.2f}  "
-            f"unit={item.get('survival_unit', 'env_step')}"
+            f"total_survival_steps={float(item.get('survival_steps_total', 0.0)):8.2f}"
         )
+
+
+def _format_top_items(items, limit=4, precision=0):
+    if not items:
+        return "none"
+    top = sorted(items.items(), key=lambda item: abs(float(item[1])), reverse=True)
+    values = []
+    for key, value in top[:limit]:
+        if precision:
+            values.append(f"{key}={float(value):.{precision}f}")
+        else:
+            values.append(f"{key}={int(value)}")
+    return ", ".join(values)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ from training.evaluation import (
     EpisodeEvalResult,
     elapsed_since,
     new_eval_id,
+    summarize_diagnostics,
     summarize_plant_stats,
     summarize_eval_results,
     time_eval_run,
@@ -105,6 +106,7 @@ def evaluate_ppo_model(
                             "sublevel_cleared_this_step"
                         ),
                         "plant_stats": info.get("plant_stats", {}),
+                        "diagnostics": info.get("diagnostics", {}),
                     },
                 )
             )
@@ -140,6 +142,7 @@ def evaluate_ppo_model(
             "initial_sun": scenario_spec.initial_sun,
             "cards": list(scenario_spec.cards),
             "plant_stats": summarize_plant_stats(details),
+            "diagnostics": summarize_diagnostics(details),
         },
     )
 

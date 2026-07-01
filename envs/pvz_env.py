@@ -310,6 +310,7 @@ class PVZEnv(gym.Env):
         # 统计
         self.zombies_killed = 0
         self.plants_lost = 0
+        self._episode_diagnostics = self._new_episode_diagnostics()
 
         # 击杀效率追踪 (位置 -> 击杀数)
         self.kill_heatmap = np.zeros((self.rows, self.cols), dtype=np.float32)
@@ -896,6 +897,9 @@ class PVZEnv(gym.Env):
         # 获取初始状态并缓存
         game_state = self.pvz.get_game_state()
         self._cached_game_state = game_state  # 缓存供第一步使用
+        self._episode_diagnostics = self._new_episode_diagnostics(game_state)
+        self._action_stats = {'plant': 0, 'shovel': 0, 'wait': 0, 'invalid': 0}
+        self._episode_reward_stats = {}
         if game_state:
             active_plants = [
                 plant for plant in game_state.plants
@@ -991,6 +995,10 @@ class PVZEnv(gym.Env):
 
         self.steps += 1
         reward = 0.0
+        previous_game_state = self._cached_game_state
+        sun_before_action = int(getattr(previous_game_state, 'sun', 0) or 0)
+        zombies_killed_before = self.zombies_killed
+        plants_lost_before = self.plants_lost
         
         # 调试：记录本步奖励详情
         step_reward_details = {}
@@ -1173,6 +1181,16 @@ class PVZEnv(gym.Env):
             self._episode_reward_stats = {}
         for k, v in step_reward_details.items():
             self._episode_reward_stats[k] = self._episode_reward_stats.get(k, 0.0) + v
+
+        self._record_episode_diagnostics(
+            action=action,
+            action_success=success,
+            sun_before_action=sun_before_action,
+            game_state=game_state,
+            reward_details=step_reward_details,
+            zombies_killed=zombies_killed_before,
+            plants_lost=plants_lost_before,
+        )
             
         # 打印本局总结
         if terminated or truncated:
@@ -2556,6 +2574,132 @@ class PVZEnv(gym.Env):
         except ValueError:
             return str(plant_type)
 
+    def _new_episode_diagnostics(self, game_state=None) -> Dict[str, Any]:
+        sun = int(getattr(game_state, 'sun', self.initial_sun) or 0)
+        return {
+            "action_stats": {
+                "wait": 0,
+                "plant": 0,
+                "shovel": 0,
+                "invalid": 0,
+                "plant_attempt_by_type": {},
+                "plant_success_by_type": {},
+            },
+            "reward_breakdown": {},
+            "zombies_killed": 0,
+            "plants_lost": 0,
+            "sun_stats": {
+                "initial_sun": sun,
+                "final_sun": sun,
+                "max_sun": sun,
+                "sun_gained": 0,
+                "sun_spent": 0,
+                "sun_sum": 0,
+                "sun_samples": 0,
+                "wait_with_high_sun": 0,
+            },
+        }
+
+    def _record_episode_diagnostics(
+        self,
+        action: int,
+        action_success: bool,
+        sun_before_action: int,
+        game_state,
+        reward_details: Dict[str, float],
+        zombies_killed: int,
+        plants_lost: int,
+    ) -> None:
+        diagnostics = self._episode_diagnostics
+        action_stats = diagnostics["action_stats"]
+        spent = 0
+
+        if action == self.n_actions - 1:
+            action_stats["wait"] += 1
+            threshold = int(self.rewards.get('wait_sun_threshold', 300))
+            if sun_before_action >= threshold:
+                diagnostics["sun_stats"]["wait_with_high_sun"] += 1
+        elif action < self.n_plant_actions:
+            action_stats["plant"] += 1
+            card_idx = action // (self.rows * self.cols)
+            plant_name = self._card_plant_name(card_idx)
+            self._increment_count(
+                action_stats["plant_attempt_by_type"],
+                plant_name,
+            )
+            if action_success:
+                self._increment_count(
+                    action_stats["plant_success_by_type"],
+                    plant_name,
+                )
+                if 0 <= card_idx < len(self.card_costs):
+                    spent = int(self.card_costs[card_idx])
+        else:
+            action_stats["shovel"] += 1
+
+        if not action_success:
+            action_stats["invalid"] += 1
+
+        for key, value in reward_details.items():
+            diagnostics["reward_breakdown"][key] = (
+                diagnostics["reward_breakdown"].get(key, 0.0) + float(value)
+            )
+
+        diagnostics["zombies_killed"] += max(
+            0,
+            int(self.zombies_killed) - int(zombies_killed),
+        )
+        diagnostics["plants_lost"] += max(
+            0,
+            int(self.plants_lost) - int(plants_lost),
+        )
+
+        current_sun = int(getattr(game_state, 'sun', sun_before_action) or 0)
+        sun_stats = diagnostics["sun_stats"]
+        sun_stats["sun_spent"] += spent
+        sun_stats["sun_gained"] += max(0, current_sun - sun_before_action + spent)
+        sun_stats["final_sun"] = current_sun
+        sun_stats["max_sun"] = max(
+            int(sun_stats["max_sun"]),
+            sun_before_action,
+            current_sun,
+        )
+        sun_stats["sun_sum"] += current_sun
+        sun_stats["sun_samples"] += 1
+
+    def _diagnostics_snapshot(self) -> Dict[str, Any]:
+        diagnostics = {
+            "action_stats": {
+                "wait": int(self._episode_diagnostics["action_stats"]["wait"]),
+                "plant": int(self._episode_diagnostics["action_stats"]["plant"]),
+                "shovel": int(self._episode_diagnostics["action_stats"]["shovel"]),
+                "invalid": int(self._episode_diagnostics["action_stats"]["invalid"]),
+                "plant_attempt_by_type": dict(
+                    self._episode_diagnostics["action_stats"]["plant_attempt_by_type"]
+                ),
+                "plant_success_by_type": dict(
+                    self._episode_diagnostics["action_stats"]["plant_success_by_type"]
+                ),
+            },
+            "reward_breakdown": dict(self._episode_diagnostics["reward_breakdown"]),
+            "zombies_killed": int(self._episode_diagnostics["zombies_killed"]),
+            "plants_lost": int(self._episode_diagnostics["plants_lost"]),
+            "sun_stats": dict(self._episode_diagnostics["sun_stats"]),
+        }
+        sun_stats = diagnostics["sun_stats"]
+        samples = int(sun_stats.pop("sun_samples", 0))
+        sun_sum = int(sun_stats.pop("sun_sum", 0))
+        sun_stats["mean_sun"] = sun_sum / samples if samples else 0.0
+        return diagnostics
+
+    def _card_plant_name(self, card_idx: int) -> str:
+        if 0 <= card_idx < len(self.card_plant_ids):
+            return self._plant_name(int(self.card_plant_ids[card_idx]))
+        return "unknown"
+
+    def _increment_count(self, target: Dict[str, int], key: str) -> None:
+        target[key] = int(target.get(key, 0)) + 1
+
     def _get_info(self) -> Dict[str, Any]:
         """获取额外信息"""
         # 从缓存状态获取游戏数据
@@ -2591,6 +2735,7 @@ class PVZEnv(gym.Env):
             "zombie_count": len(game_state.zombies) if game_state else 0,
             "plant_count": len(game_state.plants) if game_state else 0,
             "plant_stats": self._plant_episode_stats(),
+            "diagnostics": self._diagnostics_snapshot(),
             "lawnmowers": lawnmowers,
             "is_paused": False,  # PVZ doesn't expose pause state directly
         }

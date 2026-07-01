@@ -274,8 +274,16 @@ def summarize_eval_results(
 
 
 def summarize_plant_stats(details: Iterable[EpisodeEvalResult]) -> dict[str, Any]:
+    details = list(details)
     totals: dict[str, dict[str, Any]] = {}
+    action_counts: dict[str, int] = {}
     for detail in details:
+        diagnostics = detail.extra.get("diagnostics") or {}
+        action_stats = diagnostics.get("action_stats") or {}
+        _merge_count_map(
+            action_counts,
+            action_stats.get("plant_success_by_type") or {},
+        )
         plant_stats = detail.extra.get("plant_stats") or {}
         for key, stat in plant_stats.items():
             plant_id = str(stat.get("plant_id", key))
@@ -285,25 +293,112 @@ def summarize_plant_stats(details: Iterable[EpisodeEvalResult]) -> dict[str, Any
                     "plant_id": int(stat.get("plant_id", plant_id)),
                     "name": stat.get("name", plant_id),
                     "count_total": 0,
+                    "observed_count_total": 0,
                     "survival_steps_total": 0.0,
-                    "survival_unit": stat.get("survival_unit", "env_step"),
                 },
             )
-            item["count_total"] += int(stat.get("count", 0))
+            item["observed_count_total"] += int(stat.get("count", 0))
             item["survival_steps_total"] += float(
                 stat.get("survival_steps_total", 0.0)
             )
 
     for item in totals.values():
+        action_count = action_counts.pop(str(item["name"]), None)
+        if action_count is None:
+            action_count = item["observed_count_total"]
+        item["count_total"] = int(action_count)
         count = item["count_total"]
         item["survival_steps_mean"] = (
             item["survival_steps_total"] / count if count > 0 else 0.0
         )
 
+    for name, count in action_counts.items():
+        totals[f"action:{name}"] = {
+            "plant_id": -1,
+            "name": name,
+            "count_total": int(count),
+            "observed_count_total": 0,
+            "survival_steps_total": 0.0,
+            "survival_steps_mean": 0.0,
+        }
+
     return {
         key: totals[key]
-        for key in sorted(totals, key=lambda value: int(value))
+        for key in sorted(totals, key=_plant_stats_sort_key)
     }
+
+
+def summarize_diagnostics(details: Iterable[EpisodeEvalResult]) -> dict[str, Any]:
+    details = list(details)
+    summary: dict[str, Any] = {
+        "action_stats": {
+            "wait": 0,
+            "plant": 0,
+            "shovel": 0,
+            "invalid": 0,
+        },
+        "reward_breakdown": {},
+        "zombies_killed": 0,
+        "plants_lost": 0,
+        "per_episode": [],
+    }
+    for detail in details:
+        diagnostics = detail.extra.get("diagnostics") or {}
+        summary["per_episode"].append(_episode_diagnostics_row(detail, diagnostics))
+        action_stats = diagnostics.get("action_stats") or {}
+        summary["action_stats"]["wait"] += int(action_stats.get("wait", 0))
+        summary["action_stats"]["plant"] += int(action_stats.get("plant", 0))
+        summary["action_stats"]["shovel"] += int(action_stats.get("shovel", 0))
+        summary["action_stats"]["invalid"] += int(action_stats.get("invalid", 0))
+        _merge_float_map(
+            summary["reward_breakdown"],
+            diagnostics.get("reward_breakdown") or {},
+        )
+        summary["zombies_killed"] += int(diagnostics.get("zombies_killed", 0))
+        summary["plants_lost"] += int(diagnostics.get("plants_lost", 0))
+
+    return summary
+
+
+def _episode_diagnostics_row(
+    detail: EpisodeEvalResult,
+    diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    action_stats = diagnostics.get("action_stats") or {}
+    sun_stats = diagnostics.get("sun_stats") or {}
+    return {
+        "episode_index": detail.episode_index,
+        "wait_actions": int(action_stats.get("wait", 0)),
+        "plant_actions": int(action_stats.get("plant", 0)),
+        "shovel_actions": int(action_stats.get("shovel", 0)),
+        "invalid_actions": int(action_stats.get("invalid", 0)),
+        "reward_breakdown": dict(diagnostics.get("reward_breakdown") or {}),
+        "zombies_killed": int(diagnostics.get("zombies_killed", 0)),
+        "plants_lost": int(diagnostics.get("plants_lost", 0)),
+        "final_sun": int(sun_stats.get("final_sun", 0)),
+        "max_sun": int(sun_stats.get("max_sun", 0)),
+        "mean_sun": float(sun_stats.get("mean_sun", 0.0)),
+        "sun_gained": int(sun_stats.get("sun_gained", 0)),
+        "sun_spent": int(sun_stats.get("sun_spent", 0)),
+        "wait_with_high_sun": int(sun_stats.get("wait_with_high_sun", 0)),
+    }
+
+
+def _plant_stats_sort_key(value: str):
+    try:
+        return (0, int(value))
+    except ValueError:
+        return (1, value)
+
+
+def _merge_count_map(target: dict[str, int], source: dict[str, Any]) -> None:
+    for key, value in source.items():
+        target[str(key)] = int(target.get(str(key), 0)) + int(value)
+
+
+def _merge_float_map(target: dict[str, float], source: dict[str, Any]) -> None:
+    for key, value in source.items():
+        target[str(key)] = float(target.get(str(key), 0.0)) + float(value)
 
 
 def time_eval_run():

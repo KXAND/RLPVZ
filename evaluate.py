@@ -1,4 +1,5 @@
 import argparse
+import csv
 import os
 import shutil
 from datetime import datetime
@@ -68,8 +69,11 @@ def main(argv=None):
     )
     writer.write(result)
     copied_model_path = _copy_model_to_eval_output(model_path, output_dir)
+    plant_stats_path = _write_plant_stats(result, output_dir)
     _print_eval_result(result)
     print(f"Saved eval summary to {writer.csv_path}")
+    if plant_stats_path:
+        print(f"Saved plant stats to {plant_stats_path}")
     if copied_model_path:
         print(f"Copied eval model to {copied_model_path}")
 
@@ -134,6 +138,32 @@ def _copy_model_to_eval_output(model_path, output_dir):
     return destination
 
 
+def _write_plant_stats(result, output_dir):
+    plant_stats = (result.extra or {}).get("plant_stats") or {}
+    if not plant_stats:
+        return None
+
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, "plant_stats.csv")
+    fieldnames = [
+        "plant_id",
+        "name",
+        "count_total",
+        "survival_steps_mean",
+        "survival_steps_total",
+        "survival_unit",
+    ]
+    with open(path, "w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        for item in sorted(
+            plant_stats.values(),
+            key=lambda value: int(value.get("plant_id", 0)),
+        ):
+            writer.writerow({field: item.get(field) for field in fieldnames})
+    return path
+
+
 def _print_eval_metadata(args, model_path, output_dir, episodes,
                          env_spec, scenario_spec):
     sep = "-" * 58
@@ -176,7 +206,28 @@ def _print_eval_result(result):
     print(f"  {'Win rate:':20s} {result.win_count}/{result.episodes} "
           f"({100 * result.win_rate:.1f}%)")
     print(f"  {'Duration:':20s} {result.duration_sec:.2f}s")
+    _print_plant_stats(result)
     print(f"{sep}\n")
+
+
+def _print_plant_stats(result):
+    plant_stats = (result.extra or {}).get("plant_stats") or {}
+    if not plant_stats:
+        return
+
+    print(f"  {'Plant stats:':20s}")
+    rows = sorted(
+        plant_stats.values(),
+        key=lambda item: (-int(item.get("count_total", 0)), item.get("name", "")),
+    )
+    for item in rows:
+        print(
+            f"    {item.get('name', item.get('plant_id')):18s} "
+            f"count={int(item.get('count_total', 0)):4d}  "
+            f"mean_survival_steps={float(item.get('survival_steps_mean', 0.0)):8.2f}  "
+            f"total_survival_steps={float(item.get('survival_steps_total', 0.0)):8.2f}  "
+            f"unit={item.get('survival_unit', 'env_step')}"
+        )
 
 
 if __name__ == "__main__":

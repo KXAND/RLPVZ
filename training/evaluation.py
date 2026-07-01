@@ -273,6 +273,39 @@ def summarize_eval_results(
     )
 
 
+def summarize_plant_stats(details: Iterable[EpisodeEvalResult]) -> dict[str, Any]:
+    totals: dict[str, dict[str, Any]] = {}
+    for detail in details:
+        plant_stats = detail.extra.get("plant_stats") or {}
+        for key, stat in plant_stats.items():
+            plant_id = str(stat.get("plant_id", key))
+            item = totals.setdefault(
+                plant_id,
+                {
+                    "plant_id": int(stat.get("plant_id", plant_id)),
+                    "name": stat.get("name", plant_id),
+                    "count_total": 0,
+                    "survival_steps_total": 0.0,
+                    "survival_unit": stat.get("survival_unit", "env_step"),
+                },
+            )
+            item["count_total"] += int(stat.get("count", 0))
+            item["survival_steps_total"] += float(
+                stat.get("survival_steps_total", 0.0)
+            )
+
+    for item in totals.values():
+        count = item["count_total"]
+        item["survival_steps_mean"] = (
+            item["survival_steps_total"] / count if count > 0 else 0.0
+        )
+
+    return {
+        key: totals[key]
+        for key in sorted(totals, key=lambda value: int(value))
+    }
+
+
 def time_eval_run():
     return time.perf_counter()
 

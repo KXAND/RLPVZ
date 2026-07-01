@@ -6,6 +6,7 @@ from training.evaluation import (
     EpisodeEvalResult,
     elapsed_since,
     new_eval_id,
+    summarize_plant_stats,
     summarize_eval_results,
     time_eval_run,
 )
@@ -170,6 +171,7 @@ def _evaluate_with_envs(
                     "sublevel_cleared_this_step": info.get(
                         "sublevel_cleared_this_step"
                     ),
+                    "plant_stats": info.get("plant_stats", {}),
                 },
             )
         )
@@ -200,6 +202,7 @@ def _evaluate_with_envs(
             "cols": scenario_spec.cols,
             "initial_sun": scenario_spec.initial_sun,
             "cards": list(scenario_spec.cards),
+            "plant_stats": summarize_plant_stats(details),
         },
     )
 

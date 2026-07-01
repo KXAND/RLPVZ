@@ -874,6 +874,9 @@ class PVZEnv(gym.Env):
         self.total_reward = 0.0
         self.zombies_killed = 0
         self.plants_lost = 0
+        self._plant_appearances = {}
+        self._plant_lifetime_steps = {}
+        self._active_plant_starts = {}
         self._episode_win = None  # 重置胜负状态
         self._victory_printed = False  # 重置胜利打印标记
         self._no_zombie_steps = 0  # 重置无僵尸计数
@@ -906,6 +909,7 @@ class PVZEnv(gym.Env):
             self.last_zombie_count = len(active_zombies)
             self.last_zombies_state = list(active_zombies)  # 保存启用行僵尸用于追踪有效击杀
             self.last_plant_count = len(active_plants)
+            self._sync_plant_episode_stats(active_plants)
             self.last_wave = game_state.wave
             self.last_total_waves = game_state.total_waves
             self.sunflower_count = sum(1 for p in active_plants if p.type == PlantType.SUNFLOWER)
@@ -1157,6 +1161,12 @@ class PVZEnv(gym.Env):
             )
         
         self.total_reward += reward
+
+        if game_state:
+            self._sync_plant_episode_stats(
+                plant for plant in game_state.plants
+                if self._is_curriculum_cell_enabled(plant.row, plant.col)
+            )
         
         # 累计本局奖励详情
         if not hasattr(self, '_episode_reward_stats'):
@@ -2493,6 +2503,59 @@ class PVZEnv(gym.Env):
         
         return mask
     
+    def _sync_plant_episode_stats(self, active_plants) -> None:
+        current_keys = set()
+        for plant in active_plants:
+            plant_type = int(plant.type)
+            key = (plant_type, int(plant.row), int(plant.col))
+            current_keys.add(key)
+            if key not in self._active_plant_starts:
+                self._active_plant_starts[key] = self.steps
+                self._plant_appearances[plant_type] = (
+                    self._plant_appearances.get(plant_type, 0) + 1
+                )
+
+        for key, start_step in list(self._active_plant_starts.items()):
+            if key in current_keys:
+                continue
+            plant_type = key[0]
+            lifetime = max(0, self.steps - start_step)
+            self._plant_lifetime_steps[plant_type] = (
+                self._plant_lifetime_steps.get(plant_type, 0) + lifetime
+            )
+            del self._active_plant_starts[key]
+
+    def _plant_episode_stats(self) -> Dict[str, Any]:
+        lifetime_steps = dict(self._plant_lifetime_steps)
+        for key, start_step in self._active_plant_starts.items():
+            plant_type = key[0]
+            lifetime_steps[plant_type] = (
+                lifetime_steps.get(plant_type, 0)
+                + max(0, self.steps - start_step)
+            )
+
+        stats = {}
+        for plant_type in sorted(set(self._plant_appearances) | set(lifetime_steps)):
+            count = int(self._plant_appearances.get(plant_type, 0))
+            total_lifetime = int(lifetime_steps.get(plant_type, 0))
+            stats[str(plant_type)] = {
+                "plant_id": plant_type,
+                "name": self._plant_name(plant_type),
+                "count": count,
+                "survival_steps_total": total_lifetime,
+                "survival_steps_mean": (
+                    total_lifetime / count if count > 0 else 0.0
+                ),
+                "survival_unit": "env_step",
+            }
+        return stats
+
+    def _plant_name(self, plant_type: int) -> str:
+        try:
+            return PlantType(plant_type).name.lower()
+        except ValueError:
+            return str(plant_type)
+
     def _get_info(self) -> Dict[str, Any]:
         """获取额外信息"""
         # 从缓存状态获取游戏数据
@@ -2527,6 +2590,7 @@ class PVZEnv(gym.Env):
             "wave": game_state.wave if game_state else 0,
             "zombie_count": len(game_state.zombies) if game_state else 0,
             "plant_count": len(game_state.plants) if game_state else 0,
+            "plant_stats": self._plant_episode_stats(),
             "lawnmowers": lawnmowers,
             "is_paused": False,  # PVZ doesn't expose pause state directly
         }

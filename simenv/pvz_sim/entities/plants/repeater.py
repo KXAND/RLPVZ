@@ -6,7 +6,7 @@ REPEATER_COST = 200
 REPEATER_COOLDOWN = 5
 REPEATER_MAX_HP = 300
 REPEATER_ATTACK = 20
-REPEATER_ATTACK_COOLDOWN = 1.41
+REPEATER_ATTACK_COOLDOWN = 1.41 / 2
 REPEATER_PROJECTILE_SPEED = 4.625
 
 
@@ -21,8 +21,6 @@ class Repeater(Peashooter):
     def step(self, scene):
         if self.attack_cooldown <= 0:
             if scene.grid.is_attacked(self.lane):
-                scene.projectiles.append(
-                    Pea(self.PROJECTILE_SPEED, self.ATTACK, self.lane, self.pos))
                 scene.projectiles.append(
                     Pea(self.PROJECTILE_SPEED, self.ATTACK, self.lane, self.pos))
                 self.attack_cooldown = self.ATTACK_COOLDOWN * config.FPS - 1

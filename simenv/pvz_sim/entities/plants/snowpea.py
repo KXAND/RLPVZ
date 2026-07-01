@@ -1,4 +1,6 @@
 from .peashooter import Peashooter
+from ..projectile.snowpea import SnowPeaProjectile
+from ... import config
 
 SNOW_PEA_COST = 175
 SNOW_PEA_COOLDOWN = 5
@@ -15,3 +17,18 @@ class SnowPea(Peashooter):
     ATTACK = SNOW_PEA_ATTACK
     ATTACK_COOLDOWN = SNOW_PEA_ATTACK_COOLDOWN
     PROJECTILE_SPEED = SNOW_PEA_PROJECTILE_SPEED
+
+    def step(self, scene):
+        if self.attack_cooldown <= 0:
+            if scene.grid.is_attacked(self.lane):
+                scene.projectiles.append(
+                    SnowPeaProjectile(
+                        self.PROJECTILE_SPEED,
+                        self.ATTACK,
+                        self.lane,
+                        self.pos,
+                    )
+                )
+                self.attack_cooldown = self.ATTACK_COOLDOWN * config.FPS - 1
+        else:
+            self.attack_cooldown -= 1

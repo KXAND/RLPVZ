@@ -11,6 +11,7 @@ class Spikeweed(Plant):
     COOLDOWN = SPIKEWEED_COOLDOWN
     COST = SPIKEWEED_COST
     ATTACK = SPIKEWEED_ATTACK
+    BLOCKS_ZOMBIE = False
 
     def __init__(self, lane, pos):
         super().__init__(lane, pos)

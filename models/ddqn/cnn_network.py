@@ -135,14 +135,40 @@ class CNNQNetwork(nn.Module):
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """x: (batch, 596) flat observation vector."""
+        """x: (batch, 596) flat observation vector.
+
+        The paper-format vector (build_paper_state_vector) stores the 585 grid
+        elements in *feature-major* blocks::
+
+            [ onehot_all(495) | plant_hp_all(45) | zombie_hp_all(45) ]
+
+        This method rearranges them into channel-last interleaved layout
+        ``(B, 5, 9, 13)`` so the 3×3 / 1×9 convolutions see coherent
+        per-cell channel vectors.
+        """
         bsz = x.shape[0]
+        n_cells = self.rows * self.cols  # 45
+        n_onehot = self.num_cards + 1    # 11
 
-        glob_ = x[:, :self._n_global]
-        grid_flat = x[:, self._n_global:]
+        glob_ = x[:, :self._n_global]                     # (B, 11)
+        grid_flat = x[:, self._n_global:]                 # (B, 585)
 
-        grid = grid_flat.view(bsz, self.rows, self.cols, self._n_grid_channels)
-        grid = grid.permute(0, 3, 1, 2).contiguous()          # (B, 13, 5, 9)
+        # Split feature-major blocks
+        split_1 = n_cells * n_onehot                       # 495
+        split_2 = split_1 + n_cells                        # 540
+
+        onehot = grid_flat[:, :split_1]                    # (B, 495)
+        plant_hp = grid_flat[:, split_1:split_2]           # (B, 45)
+        zombie_hp = grid_flat[:, split_2:]                 # (B, 45)
+
+        # Reshape each block → (B, cells, features) and interleave
+        onehot = onehot.view(bsz, n_cells, n_onehot)       # (B, 45, 11)
+        plant_hp = plant_hp.view(bsz, n_cells, 1)          # (B, 45, 1)
+        zombie_hp = zombie_hp.view(bsz, n_cells, 1)        # (B, 45, 1)
+
+        grid = torch.cat([onehot, plant_hp, zombie_hp], dim=-1)  # (B, 45, 13)
+        grid = grid.view(bsz, self.rows, self.cols, self._n_grid_channels)  # (B, 5, 9, 13)
+        grid = grid.permute(0, 3, 1, 2).contiguous()       # (B, 13, 5, 9)
 
         feat_3x3 = self.branch_3x3(grid).reshape(bsz, -1)
         feat_1x9 = self.branch_1x9(grid).reshape(bsz, -1)

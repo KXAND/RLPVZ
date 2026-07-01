@@ -1,7 +1,5 @@
 import numpy as np
 
-SUN_NORM = 200.0
-
 
 class _DiscreteActionSpace:
     def __init__(self, n):
@@ -13,8 +11,7 @@ class DDQNSpaceSpec:
     Env-like shape adapter for constructing DDQN networks without opening PVZ.
     """
 
-    def __init__(self, env_spec, scenario_spec=None,
-                 use_paper_observation: bool = False):
+    def __init__(self, env_spec, scenario_spec=None):
         self.rows = env_spec.rows
         self.cols = env_spec.cols
         self.num_cards = env_spec.plant_types
@@ -22,7 +19,6 @@ class DDQNSpaceSpec:
         self.plant_deck = (
             list(scenario_spec.cards) if scenario_spec is not None else []
         )
-        self.use_paper_observation = use_paper_observation
 
 
 def _extract_action_mask(obs, env):
@@ -45,62 +41,6 @@ def _extract_sun(obs, info):
     return 0.0
 
 
-def _plant_availability_from_mask(action_mask, num_cards, grid_size):
-    mask = np.asarray(action_mask, dtype=bool)
-    avail = np.zeros(num_cards, dtype=np.float32)
-    for i in range(num_cards):
-        start = i * grid_size
-        end = start + grid_size
-        if end <= mask.size and np.any(mask[start:end]):
-            avail[i] = 1.0
-    return avail
-
-
-# ─────────────────────────────────────────────────────────────────────────
-# Legacy flat vector (used by the original small DDQN adapter)
-# ─────────────────────────────────────────────────────────────────────────
-
-def build_state_vector(obs, action_mask, sun, rows, cols, num_cards):
-    """Original simplified state: [plant_grid | zombie_hp | plant_avail | sun]."""
-    if not isinstance(obs, dict) or "grid" not in obs:
-        raise ValueError("DDQN requires dict observation with 'grid'.")
-
-    grid = obs["grid"]
-    if grid.shape[0] != rows or grid.shape[1] != cols:
-        raise ValueError(
-            f"Grid shape mismatch: expected ({rows},{cols},C), got {grid.shape}."
-        )
-
-    plant_grid = (grid[:, :, 0] > 0).astype(np.float32)
-    zombie_grid = grid[:, :, 4].astype(np.float32)
-
-    grid_size = rows * cols
-    plant_avail = _plant_availability_from_mask(action_mask, num_cards, grid_size)
-
-    sun_norm = float(sun) / float(SUN_NORM)
-
-    state = np.concatenate(
-        [
-            plant_grid.reshape(-1),
-            zombie_grid.reshape(-1),
-            plant_avail,
-            np.array([sun_norm], dtype=np.float32),
-        ],
-        axis=0,
-    ).astype(np.float32)
-    return state
-
-
-# ─────────────────────────────────────────────────────────────────────────
-# Paper-format observation (596-dim flat vector, matching paper Section 4.1)
-# Matches the paper spec: 11 (global) + 495 (plant one-hot) + 45 (HP) + 45 (zombie HP) = 596
-# ─────────────────────────────────────────────────────────────────────────
-
-# Mapping from raw plant_type_id (grid channel 0) → observation class index (0-10)
-# Class 0-9 = plant type as card slot index, 10 = empty / unknown
-_PLANT_ID_TO_CLASS: dict[int, int] = {}
-
-
 def _build_plant_onehot(grid_obs, rows, cols, num_cards,
                         card_plant_ids: list[int]) -> np.ndarray:
     """Build one-hot plant-type encoding: 45 cells × (num_cards + 1) classes.
@@ -114,14 +54,10 @@ def _build_plant_onehot(grid_obs, rows, cols, num_cards,
     Returns:
         float32 array of shape (rows * cols * (num_cards + 1),).
     """
-    global _PLANT_ID_TO_CLASS
     n_classes = num_cards + 1  # +1 for empty
-    n_cells = rows * cols
-
-    # Build mapping: raw plant_type_id → class index (0-based)
-    if not _PLANT_ID_TO_CLASS:
-        for cls_idx, pid in enumerate(card_plant_ids):
-            _PLANT_ID_TO_CLASS[int(pid)] = cls_idx
+    plant_id_to_class = {
+        int(pid): cls_idx for cls_idx, pid in enumerate(card_plant_ids)
+    }
 
     onehot = np.zeros((rows, cols, n_classes), dtype=np.float32)
 
@@ -136,13 +72,13 @@ def _build_plant_onehot(grid_obs, rows, cols, num_cards,
     for r in range(rows):
         for c in range(cols):
             tid = type_ids[r, c]
-            cls_idx = _PLANT_ID_TO_CLASS.get(int(tid), n_classes - 1)
+            cls_idx = plant_id_to_class.get(int(tid), n_classes - 1)
             onehot[r, c, cls_idx] = 1.0
 
     return onehot.reshape(-1)
 
 
-def _build_plant_hp(grid_obs, rows, cols, plant_data) -> np.ndarray:
+def _build_plant_hp(grid_obs, rows, cols) -> np.ndarray:
     """Extract plant HP per cell, normalised by each plant type's max HP.
 
     Returns shape (rows * cols,).
@@ -150,10 +86,6 @@ def _build_plant_hp(grid_obs, rows, cols, plant_data) -> np.ndarray:
     hp_grid = np.zeros((rows, cols), dtype=np.float32)
     raw_type = np.round(grid_obs[:, :, 0] * 50.0).astype(int) - 1
     raw_hp_ratio = grid_obs[:, :, 1]  # already normalised in env
-
-    plant_hp_max = {}
-    if hasattr(plant_data, 'PLANT_HP'):
-        plant_hp_max = plant_data.PLANT_HP
 
     for r in range(rows):
         for c in range(cols):
@@ -223,12 +155,19 @@ def _build_card_cooldowns(action_mask, rows, cols, num_cards) -> np.ndarray:
     return cooldowns
 
 
-def build_paper_state_vector(obs, action_mask, sun, rows, cols, num_cards,
-                             card_plant_ids: list[int],
-                             cooldowns: np.ndarray | None = None) -> np.ndarray:
-    """Build the 596-dim paper-format observation vector.
+def build_typed_onehot_state_vector(
+    obs,
+    action_mask,
+    sun,
+    rows,
+    cols,
+    num_cards,
+    card_plant_ids: list[int],
+    cooldowns: np.ndarray | None = None,
+) -> np.ndarray:
+    """Build the DDQN typed one-hot observation vector.
 
-    Composition (matching paper Table 2):
+    Composition for 5x9 with 10 cards:
         sun count           :  1 dim
         card cooldowns      : 10 dim  — continuous [0,1] when game state is
                               available (0=ready, →1=full cooldown), binary
@@ -238,14 +177,9 @@ def build_paper_state_vector(obs, action_mask, sun, rows, cols, num_cards,
         zombie HP grid      : rows×cols = 45 dim
         ─────────────────────────────────────────────────────
         Total               : 596
-
-    Returns:
-        float32 numpy array of length 596.
     """
     if not isinstance(obs, dict) or "grid" not in obs:
-        raise ValueError("DDQN paper-format requires dict observation with 'grid'.")
-
-    from data import plants as plant_data
+        raise ValueError("DDQN typed one-hot observation requires dict observation with 'grid'.")
 
     grid = obs["grid"]
     if grid.shape[0] != rows or grid.shape[1] != cols:
@@ -263,7 +197,7 @@ def build_paper_state_vector(obs, action_mask, sun, rows, cols, num_cards,
         cd = _build_card_cooldowns(action_mask, rows, cols, num_cards)
 
     plant_onehot = _build_plant_onehot(grid, rows, cols, num_cards, card_plant_ids)
-    plant_hp = _build_plant_hp(grid, rows, cols, plant_data)
+    plant_hp = _build_plant_hp(grid, rows, cols)
     zombie_hp = _build_zombie_hp(grid, rows, cols)
 
     state = np.concatenate(
@@ -280,13 +214,13 @@ def build_paper_state_vector(obs, action_mask, sun, rows, cols, num_cards,
     expected = 1 + num_cards + rows * cols * (num_cards + 1) + 2 * rows * cols
     if state.shape[0] != expected:
         raise RuntimeError(
-            f"Paper state vector size mismatch: {state.shape[0]} != {expected}"
+            f"Typed one-hot state vector size mismatch: {state.shape[0]} != {expected}"
         )
     return state
 
 
-def paper_state_dim(rows: int, cols: int, num_cards: int) -> int:
-    """Return expected dimension of the paper-format observation."""
+def typed_onehot_state_dim(rows: int, cols: int, num_cards: int) -> int:
+    """Return expected dimension of the DDQN typed one-hot observation."""
     return 1 + num_cards + rows * cols * (num_cards + 1) + 2 * rows * cols
 
 
@@ -296,14 +230,9 @@ def paper_state_dim(rows: int, cols: int, num_cards: int) -> int:
 
 class DDQNEnvAdapter:
     """Wrap PVZEnv to provide DDQN-compatible observations and action masks.
-
-    Two observation modes:
-    - Legacy (default): plant_grid + zombie_grid + availability + sun
-    - Paper: full one-hot encoding + HP per cell (596-dim for 5×9×10)
     """
 
-    def __init__(self, env, env_spec=None, scenario_spec=None,
-                 use_paper_observation: bool = False):
+    def __init__(self, env, env_spec=None, scenario_spec=None):
         self.env = env
         self.action_space = env.action_space
         self.rows = env.rows
@@ -311,7 +240,6 @@ class DDQNEnvAdapter:
         self.num_cards = env.num_cards
         self.plant_deck = list(getattr(env, "card_plant_ids", []))
         self._last_action_mask = None
-        self.use_paper_observation = use_paper_observation
 
         expected_rows = env_spec.rows if env_spec is not None else self.rows
         expected_cols = env_spec.cols if env_spec is not None else self.cols
@@ -349,16 +277,16 @@ class DDQNEnvAdapter:
         self._last_action_mask = action_mask
         sun = _extract_sun(obs, info)
 
-        if self.use_paper_observation:
-            cooldowns = _extract_card_cooldowns(self.env, self.num_cards)
-            return build_paper_state_vector(
-                obs, action_mask, sun,
-                self.rows, self.cols, self.num_cards,
-                self.plant_deck,
-                cooldowns=cooldowns,
-            )
-        return build_state_vector(
-            obs, action_mask, sun, self.rows, self.cols, self.num_cards,
+        cooldowns = _extract_card_cooldowns(self.env, self.num_cards)
+        return build_typed_onehot_state_vector(
+            obs,
+            action_mask,
+            sun,
+            self.rows,
+            self.cols,
+            self.num_cards,
+            self.plant_deck,
+            cooldowns=cooldowns,
         )
 
     def reset(self, **kwargs):

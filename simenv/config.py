@@ -15,11 +15,10 @@ DIFFICULTY = {
 
 
 ZOMBIE_SPAWN = {
-    "initial_offset_sec": 10,
-    "spawn_interval_sec": 8,
-    "first_wave_delay_multiplier": 10,
-    "wave_interval_multiplier": 20,
-    "post_wave_spawn_delay_multiplier": 10,
+    "first_wave_delay_sec": 18,
+    "wave_interval_sec": 27,
+    "post_clear_wave_delay_sec": 3,
+    "flag_wave_followup_interval_sec": 50,
     "flag_wave_modulo": 10,
     "flag_wave_remainder": 9,
     "base_advanced_probability": 0.05,

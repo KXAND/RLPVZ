@@ -128,8 +128,6 @@ class AsyncDDQNTrainer:
         max_episodes,
         network_update_frequency,
         network_sync_frequency,
-        evaluate_frequency,
-        evaluate_n_iter,
     ):
         worker_pool = DDQNWorkerPool(
             args=self.args,
@@ -148,8 +146,6 @@ class AsyncDDQNTrainer:
                 max_episodes=max_episodes,
                 network_update_frequency=network_update_frequency,
                 network_sync_frequency=network_sync_frequency,
-                evaluate_frequency=evaluate_frequency,
-                evaluate_n_iter=evaluate_n_iter,
             )
         finally:
             worker_pool.stop()
@@ -160,14 +156,10 @@ class AsyncDDQNTrainer:
         max_episodes,
         network_update_frequency,
         network_sync_frequency,
-        evaluate_frequency,
-        evaluate_n_iter,
     ):
         try:
             while self.stats.episode_count < max_episodes and not self.solved:
-                self._drain_stats_queue(
-                    worker_pool, evaluate_frequency, evaluate_n_iter
-                )
+                self._drain_stats_queue(worker_pool)
 
                 try:
                     transition = worker_pool.transition_queue.get(timeout=1.0)
@@ -213,14 +205,14 @@ class AsyncDDQNTrainer:
         finally:
             # Drain remaining episode messages BEFORE telling workers to stop,
             # so in-flight episodes get their stats recorded.
-            self._drain_stats_queue(worker_pool, evaluate_frequency, evaluate_n_iter)
+            self._drain_stats_queue(worker_pool)
             worker_pool.request_stop()
-            self._drain_stats_queue(worker_pool, evaluate_frequency, evaluate_n_iter)
+            self._drain_stats_queue(worker_pool)
             # Always save the final plot, even if training was interrupted.
             self._emit_training_metrics(force=True)
             self.reporter.print_finished(self.solved, self.stats.episode_count)
 
-    def _drain_stats_queue(self, worker_pool, evaluate_frequency, evaluate_n_iter):
+    def _drain_stats_queue(self, worker_pool):
         self.worker_status.check_processes(worker_pool.workers)
 
         while True:

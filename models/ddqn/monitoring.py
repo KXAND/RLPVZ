@@ -4,7 +4,7 @@ from training.metrics import MetricEvent, TrainingSnapshot
 
 # 模型状态监视器
 # 实现
-# DDQNTrainingStats: 维护 episode、loss、eval 等训练统计，并生成 TrainingSnapshot。
+# DDQNTrainingStats: 维护 episode、loss 等训练统计，并生成 TrainingSnapshot。
 # DDQNMetricEmitter: 将 DDQN 训练事件转换为通用 MetricsPipeline 事件。
 # DDQNConsoleReporter: 输出 DDQN 控制台进度、eval、checkpoint 和结束信息。
 # DDQNWorkerStatus: 跟踪 worker 存活状态，处理 worker warning/error。
@@ -40,13 +40,6 @@ class EpisodeStats:
         )
 
 
-@dataclass(frozen=True)
-class EvalStats:
-    episode: int
-    avg_score: float
-    avg_iterations: float
-
-
 class DDQNTrainingStats:
     _MAX_LOSS_HISTORY = 20000
     _MAX_EPISODE_HISTORY = 10000
@@ -60,9 +53,6 @@ class DDQNTrainingStats:
         self.training_loss = []
         self.mean_training_rewards = []
         self.mean_training_iterations = []
-        self.real_rewards = []
-        self.real_iterations = []
-        self.eval_episodes = []
         self.sync_eps = []
 
     @classmethod
@@ -164,27 +154,6 @@ class DDQNTrainingStats:
     def record_sync(self):
         self.sync_eps.append(self.episode_count)
 
-    def should_evaluate(self, frequency: int) -> bool:
-        return self.episode_count > 0 and self.episode_count % frequency == 0
-
-    def record_eval(self, n_iter: int) -> EvalStats:
-        recent_rewards = self.training_rewards[-n_iter:]
-        recent_iterations = self.training_iterations[-n_iter:]
-        avg_score = sum(recent_rewards) / len(recent_rewards) if recent_rewards else 0.0
-        avg_iterations = (
-            sum(recent_iterations) / len(recent_iterations)
-            if recent_iterations
-            else 0.0
-        )
-        self.real_rewards.append(float(avg_score))
-        self.real_iterations.append(float(avg_iterations))
-        self.eval_episodes.append(self.episode_count)
-        return EvalStats(
-            episode=self.episode_count,
-            avg_score=float(avg_score),
-            avg_iterations=float(avg_iterations),
-        )
-
     def to_snapshot(self, force=False) -> TrainingSnapshot:
         return TrainingSnapshot(
             algo="ddqn",
@@ -193,8 +162,6 @@ class DDQNTrainingStats:
             episode_rewards=list(self.training_rewards),
             mean_rewards=list(self.mean_training_rewards),
             mean_iterations=list(self.mean_training_iterations),
-            eval_steps=list(self.eval_episodes),
-            eval_rewards=list(self.real_rewards),
             losses=list(self.training_loss),
             force=force,
         )
@@ -258,20 +225,6 @@ class DDQNMetricEmitter:
             episode=episode_stats.episode,
         )
 
-    def emit_eval(self, eval_stats, transition_count):
-        self.emit(
-            name="eval_reward",
-            value=eval_stats.avg_score,
-            step=transition_count,
-            episode=eval_stats.episode,
-        )
-        self.emit(
-            name="eval_iterations",
-            value=eval_stats.avg_iterations,
-            step=transition_count,
-            episode=eval_stats.episode,
-        )
-
     def emit_strict_eval(self, eval_result, transition_count):
         self.emit(
             name="eval_reward_mean",
@@ -315,16 +268,6 @@ class DDQNConsoleReporter:
     def print_progress(self, episode_stats, worker_id=None):
         worker_text = f"Worker: {worker_id} " if worker_id is not None else ""
         print(f"{worker_text}{episode_stats.progress_line}", flush=True)
-
-    def print_eval(self, eval_stats, progress_line, stage_name=""):
-        stage_text = f" | stage={stage_name}" if stage_name else ""
-        print(
-            f"[Eval] Episode {eval_stats.episode}{stage_text} | "
-            f"avg_score={eval_stats.avg_score:.2f} | "
-            f"avg_iter={eval_stats.avg_iterations:.2f}",
-            flush=True,
-        )
-        print(flush=True)
 
     def print_checkpoint(self, episode_count):
         print(

@@ -403,8 +403,6 @@ training:
     ddqn_lr: 0.001
     ddqn_update_freq: 32
     ddqn_sync_freq: 2000
-    ddqn_eval_freq: 20
-    ddqn_eval_iters: 5
     ddqn_checkpoint_freq: 500
     ddqn_plot_freq: 20
     ddqn_plot_path: null

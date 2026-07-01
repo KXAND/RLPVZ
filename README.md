@@ -183,7 +183,6 @@ DDQN 特有参数：
 | `--ddqn_sync_freq` | 2000 | Target 网络同步频率 |
 | `--ddqn_hidden_sizes` | 256,128 | 隐层大小（逗号分隔，baseline 为 2048,2048） |
 | `--ddqn_checkpoint_freq` | 500 | Checkpoint 保存频率（episode） |
-| `--ddqn_eval_freq` | 100 | 评估频率（episode） |
 
 ## 输出文件
 

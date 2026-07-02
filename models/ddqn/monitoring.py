@@ -69,11 +69,31 @@ class DDQNTrainingStats:
     def from_history(cls, window: int, snapshot=None, events=None):
         stats = cls(window=window)
         events = events or []
+
+        # Determine the trustworthy episode count from snapshot (saved atomically
+        # at each snapshot interval).  CSV events beyond this count may be from
+        # a previous run that was not cleanly finalised — ignore them.
+        trusted_ep = None
+        if snapshot is not None:
+            stats.training_loss = list(snapshot.losses)
+            stats.real_rewards = list(snapshot.eval_rewards)
+            stats.eval_episodes = list(snapshot.eval_steps)
+            stats.episode_count = int(snapshot.episode_count)
+            stats.training_rewards = list(snapshot.episode_rewards)
+            stats.mean_training_rewards = list(snapshot.mean_rewards)
+            stats.mean_training_iterations = list(snapshot.mean_iterations)
+            trusted_ep = int(snapshot.episode_count)
+
+        # Replay CSV events only up to the trusted snapshot boundary.
+        # If no snapshot exists, replay everything (fresh run or recovery).
         episodes = {}
         for event in events:
             if event.source != "ddqn" or event.episode is None:
                 continue
-            item = episodes.setdefault(int(event.episode), {})
+            ep = int(event.episode)
+            if trusted_ep is not None and ep > trusted_ep:
+                continue
+            item = episodes.setdefault(ep, {})
             if event.name == "episode_reward":
                 item["reward"] = float(event.value)
             elif event.name == "episode_iterations":
@@ -81,24 +101,17 @@ class DDQNTrainingStats:
             elif event.name == "episode_success":
                 item["success"] = bool(event.value)
 
-        for episode in sorted(episodes):
-            item = episodes[episode]
-            if {"reward", "iterations", "success"} <= item.keys():
-                stats.record_episode(
-                    item["reward"],
-                    item["iterations"],
-                    item["success"],
-                )
-
-        if snapshot is not None:
-            stats.training_loss = list(snapshot.losses)
-            stats.real_rewards = list(snapshot.eval_rewards)
-            stats.eval_episodes = list(snapshot.eval_steps)
-            if not stats.training_rewards:
-                stats.episode_count = int(snapshot.episode_count)
-                stats.training_rewards = list(snapshot.episode_rewards)
-                stats.mean_training_rewards = list(snapshot.mean_rewards)
-                stats.mean_training_iterations = list(snapshot.mean_iterations)
+        # Only use CSV-replayed episodes if we don't already have snapshot data.
+        # Snapshot is the authoritative source when available.
+        if not stats.training_rewards:
+            for episode in sorted(episodes):
+                item = episodes[episode]
+                if {"reward", "iterations", "success"} <= item.keys():
+                    stats.record_episode(
+                        item["reward"],
+                        item["iterations"],
+                        item["success"],
+                    )
 
         return stats
 

@@ -12,6 +12,7 @@ class CheckpointPayload:
     env: Any = None
     network: Any = None
     tag: str | None = None
+    extra: dict | None = None  # algorithm-specific (optimizer_state, buffer, stats, ...)
 
     def has_target(self) -> bool:
         return self.model is not None or self.network is not None
@@ -71,12 +72,13 @@ class CheckpointManager:
         os.makedirs(output_dir, exist_ok=True)
         return self.handler.save_payload(payload)
 
-    def save(self, model=None, env=None, network=None, tag=None):
+    def save(self, model=None, env=None, network=None, tag=None, extra=None):
         return self.save_payload(
             CheckpointPayload(
                 model=model,
                 env=env,
                 network=network,
                 tag=tag,
+                extra=extra,
             )
         )

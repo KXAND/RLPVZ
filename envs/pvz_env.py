@@ -330,6 +330,11 @@ class PVZEnv(gym.Env):
         self.sublevel_cleared_this_step = False
         self._survival_sublevel_completion_latched = False
 
+        # 异步 reset 优化：设为 True 时，step() 中跳过 _handle_game_failure()，
+        # 将失败画面导航推迟到 reset() 中执行（由 AsyncResetVecEnv 后台线程调用）
+        self._skip_failure_handling = False
+        self._was_slowed = False  # slow_event 降速状态追踪
+
     def _should_console(self, level: int) -> bool:
         return self.verbose >= level
 
@@ -588,7 +593,64 @@ class PVZEnv(gym.Env):
                 return False
         
         return True
-    
+
+    def goto_card_select(self) -> bool:
+        """快速导航到选卡界面，不进入游戏。
+
+        从任意 UI 状态直接导航到选卡界面，选好卡但不点"开始"。
+        用于 rollout 前快速同步所有环境。
+        """
+        if not self._connect():
+            return False
+
+        ui = self.hook_client.get_ui()
+
+        # 从失败/奖励/游戏中退回主菜单
+        if ui in (3, 4, 5):
+            if ui == 4:  # ZOMBIES_WON
+                for _ in range(10):
+                    self.hook_client.click_scaled(280, 370)
+                    time.sleep(0.3)
+                    if self.hook_client.get_ui() != 4:
+                        break
+            self.hook_client.back_to_main()
+            time.sleep(1.0)
+
+        ui = self.hook_client.get_ui()
+
+        # 处理边缘状态
+        if ui == 0:  # 加载中
+            self.hook_client.click(400, 300)
+            time.sleep(1.0)
+        if ui == 7:  # 选项
+            self.hook_client._send_command("CLOSEOPTS")
+            time.sleep(0.5)
+
+        # 获取当前 UI
+        ui = self.hook_client.get_ui()
+
+        if ui == 1:  # 主菜单
+            # start_game 进入关卡 → 到达选卡界面
+            if not self.hook_client.start_game(self.game_mode):
+                return False
+            time.sleep(1.0)
+
+        ui = self.hook_client.get_ui()
+
+        if ui == 2:  # 选卡界面
+            # 选卡但不点开始
+            if not self.hook_client.select_cards(self.card_plant_ids):
+                self._emit("[PVZEnv] 选卡失败", console_level=1, log_level=1)
+                return False
+            return True
+
+        # 其他状态：回退到完整 reset
+        self._emit(
+            f"[PVZEnv] goto_card_select 异常状态 ui={ui}，回退完整 reset",
+            console_level=1, log_level=1,
+        )
+        return False
+
     def _set_game_speed(self, speed: float):
         """设置游戏速度（仅在游戏中有效）"""
         if self.hook_client and self.hook_client.connected:
@@ -678,10 +740,46 @@ class PVZEnv(gym.Env):
         # 连接游戏
         if not self._connect():
             raise RuntimeError("Failed to connect to PVZ game. 请先启动游戏并注入DLL!")
-        
+
+        # 设置游戏速度 —— 必须在 UI 导航之前，避免 1x 慢速阻塞
+        if self.game_speed != 1.0:
+            tick_ms = max(1, int(10.0 / self.game_speed))
+            if not self.hook_client.set_tick_ms(tick_ms):
+                self.hook_client.set_game_speed(min(self.game_speed, 10.0))
+
         # 检查当前UI状态
         ui = self.hook_client.get_ui()
-        
+
+        # 显式处理结算画面：无论胜负，都先退回主菜单
+        # step() 中的 _handle_game_failure 可能未运行或未覆盖所有情况
+        if ui in (4, 5):  # ZOMBIES_WON / AWARD
+            screen = "失败" if ui == 4 else "奖励"
+            self._emit(
+                f"[PVZEnv] reset 检测到结算画面 (UI={ui}={screen})，退回主菜单...",
+                console_level=1, log_level=1,
+            )
+            # 点击画面通过结算
+            for attempt in range(10):
+                self.hook_client.click_scaled(280, 370)
+                time.sleep(0.3)
+                new_ui = self.hook_client.get_ui()
+                if new_ui not in (4, 5):
+                    ui = new_ui
+                    break
+            # 如果还在结算画面，强制返回主菜单
+            if ui in (4, 5):
+                self.hook_client.back_to_main()
+                time.sleep(1.5)
+                ui = self.hook_client.get_ui()
+            # 确保到达主菜单
+            if ui != 1:
+                self.hook_client.back_to_main()
+                time.sleep(1.0)
+                ui = self.hook_client.get_ui()
+            if ui != 1:
+                self._require_ui(1, timeout=5.0, error_message="从结算画面返回主菜单超时")
+                ui = 1
+
         if ui == -1:
             # 尝试直接用内存读取判断是否在游戏中
             if self.pvz and self.pvz.is_in_game():
@@ -767,12 +865,6 @@ class PVZEnv(gym.Env):
             else:
                 self._emit("[PVZEnv] 警告: 设置初始阳光失败", console_level=1, log_level=1)
 
-        # 设置游戏速度
-        if self.game_speed != 1.0:
-            tick_ms = max(1, int(10.0 / self.game_speed))
-            if not self.hook_client.set_tick_ms(tick_ms):
-                self.hook_client.set_game_speed(min(self.game_speed, 10.0))
-        
         # 发送 FLUSH 命令确保没有残留的命令
         self.hook_client._send_command("FLUSH")
         time.sleep(0.1)
@@ -826,9 +918,14 @@ class PVZEnv(gym.Env):
         
         obs = self._get_observation()
         info = self._get_info()
-        
+
+        # 本 env 的 reset 已完成，通知其他 env 可以恢复全速
+        _slow = getattr(self, '_slow_event', None)
+        if _slow is not None:
+            _slow.clear()
+
         return obs, info
-    
+
     def step(self, action: int) -> Tuple[Dict[str, np.ndarray], float, bool, bool, Dict[str, Any]]:
         """
         执行动作
@@ -843,6 +940,18 @@ class PVZEnv(gym.Env):
             truncated: 是否截断 (超时)
             info: 额外信息
         """
+
+        # ── 慢速模式：其他 env 正在 reset，本 env 降到 0.05x ──
+        _slow = getattr(self, '_slow_event', None)
+        if _slow is not None and self.hook_client and self.hook_client.connected:
+            if _slow.is_set():
+                if not getattr(self, '_was_slowed', False):
+                    self.hook_client.set_tick_ms(200)  # 200ms/tick = 0.05x
+                    self._was_slowed = True
+            elif getattr(self, '_was_slowed', False):
+                tick_ms = max(1, int(10.0 / self.game_speed))
+                self.hook_client.set_tick_ms(tick_ms)
+                self._was_slowed = False
 
         # 轻量级保活：如果 Hook/TCP 断开或附加丢失，尝试即时重连/重新附加
         if self.hook_client:
@@ -889,9 +998,10 @@ class PVZEnv(gym.Env):
         # 解析动作 - 使用上一帧的缓存状态检查
         success = self._execute_action(action, self._cached_game_state)
         
+        _debug_mode = self.rewards.get('debug_mode', None)
         if not success:
             r_invalid = self.rewards.get('invalid_action', -0.01)
-            if r_invalid != 0:
+            if r_invalid != 0 and not _debug_mode:
                 reward += r_invalid
                 step_reward_details['invalid'] = r_invalid
             self._action_stats['invalid'] += 1
@@ -899,7 +1009,7 @@ class PVZEnv(gym.Env):
             if action == self.n_actions - 1:  # 等待动作
                 self._action_stats['wait'] += 1
                 wait_penalty = self.rewards.get('wait_with_sun', -0.02)
-                if wait_penalty != 0 and self._cached_game_state:
+                if wait_penalty != 0 and not _debug_mode and self._cached_game_state:
                     sun = self._cached_game_state.sun
                     if sun >= 300:
                         reward += wait_penalty
@@ -1001,28 +1111,34 @@ class PVZEnv(gym.Env):
             
             if terminated:
                 self._episode_win = win  # 记录胜负
-                # 游戏结束，先恢复正常速度
-                self._restore_normal_speed()
-                
+                # 通知其他 env 降速，减少本轮阻塞期间的游戏偏离
+                _slow = getattr(self, '_slow_event', None)
+                if _slow is not None:
+                    _slow.set()
+
                 if win:
                     # 连胜奖励：越连胜奖励越高
                     self.win_streak += 1
                     self.max_win_streak = max(self.max_win_streak, self.win_streak)
-                    
-                    base_win = self.rewards.get('game_win', 3.0)
-                    streak_bonus = self.win_streak * self.rewards.get('streak_bonus', 1.0)
-                    reward += base_win + streak_bonus
+
+                    if not _debug_mode:
+                        base_win = self.rewards.get('game_win', 3.0)
+                        streak_bonus = self.win_streak * self.rewards.get('streak_bonus', 1.0)
+                        reward += base_win + streak_bonus
+                        step_reward_details['win'] = base_win + streak_bonus
                     # 无僵尸空窗计数，用于额外胜利兜底
                     self._no_zombie_steps = 0
-                    step_reward_details['win'] = base_win + streak_bonus
                 else:
                     # 失败，连胜归零
                     self.win_streak = 0
-                    r_lose = self.rewards.get('game_lose', -3.0)
-                    reward += r_lose
-                    step_reward_details['lose'] = r_lose
+                    if not _debug_mode:
+                        r_lose = self.rewards.get('game_lose', -3.0)
+                        reward += r_lose
+                        step_reward_details['lose'] = r_lose
                     # 失败时主动返回主菜单，准备下一次 reset
-                    self._handle_game_failure()
+                    # 异步 reset 模式下跳过，留给后台 reset 线程处理
+                    if not self._skip_failure_handling:
+                        self._handle_game_failure()
             
             # 更新状态
             self._update_last_state(game_state, potential)
@@ -1168,7 +1284,33 @@ class PVZEnv(gym.Env):
             zombie for zombie in game_state.zombies
             if self._is_curriculum_row_enabled(zombie.row)
         ]
-        
+
+        # ── Debug reward mode: zombie HP reduction per step ──
+        debug_mode = self.rewards.get('debug_mode', None)
+        if debug_mode == "zombie_damage":
+            prev_hp_map = {}
+            if hasattr(self, 'last_zombies_state'):
+                for z in self.last_zombies_state:
+                    prev_hp_map[z.index] = float(getattr(z, 'total_hp', 0))
+
+            damage = 0.0
+            curr_indices = set()
+            for z in active_zombies:
+                curr_hp = float(getattr(z, 'total_hp', 0))
+                curr_indices.add(z.index)
+                if z.index in prev_hp_map:
+                    damage += max(0.0, prev_hp_map[z.index] - curr_hp)
+
+            # Zombies that disappeared (killed / removed) — count all remaining HP as damage
+            for idx, prev_hp in prev_hp_map.items():
+                if idx not in curr_indices:
+                    damage += prev_hp
+
+            reward = damage
+            details['zombie_damage'] = damage
+            potential = self._calculate_potential(game_state)
+            return reward, details, potential
+
         # 存活奖励
         r_survival = self.rewards.get('survival_per_step', 0.0)
         if r_survival != 0:

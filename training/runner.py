@@ -2,7 +2,7 @@ from .checkpoint import CheckpointManager
 from .context import build_train_context
 from .logging import setup_logging
 from .paths import build_run_paths
-from .game_instances import prepare_game_instances
+from .game_instances import prepare_game_instances, terminate_pvz_processes
 from utils.train_utils import print_metadata, setup_device, write_run_metadata
 
 
@@ -67,6 +67,10 @@ class TrainRunner:
                     error=training_error,
                 )
                 context.artifacts.close()
+                terminate_pvz_processes(
+                    context.game_instances,
+                    auto_start=getattr(self.args, "auto_start", True),
+                )
 
         if interrupted:
             return

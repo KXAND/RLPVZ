@@ -13,6 +13,10 @@ class DDQNLearner:
     def __init__(self, network, batch_size: int, gamma: float):
         self.network = network
         self.target_network = deepcopy(network)
+        self.target_network.eval()  # always use running stats (BatchNorm-safe)
+        # Target network never trains — drop the copied optimizer to save memory
+        if hasattr(self.target_network, 'optimizer'):
+            self.target_network.optimizer = None
         self.batch_size = batch_size
         self.gamma = gamma
 

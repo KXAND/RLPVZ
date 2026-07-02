@@ -28,6 +28,7 @@ class AsyncDDQNTrainer:
         context=None,
         env_spec=None,
         scenario_spec=None,
+        restored_extra=None,  # from load_full_state: {optimizer_state_dict, buffer_data, episode_count, ...}
     ):
         self.args = args
         self.instances = instances
@@ -59,6 +60,38 @@ class AsyncDDQNTrainer:
             (event.step or 0 for event in metric_events),
             default=0,
         )
+
+        # ── Restore optimizer state, replay buffer & episode count from checkpoint ──
+        if restored_extra is not None:
+            if restored_extra.get("optimizer_state_dict"):
+                self.learner.network.optimizer.load_state_dict(
+                    restored_extra["optimizer_state_dict"]
+                )
+                print(
+                    "[DDQN] optimizer 状态已恢复 (Adam m/v buffers)",
+                    flush=True,
+                )
+            if restored_extra.get("buffer_data"):
+                from .checkpoint import _deserialize_buffer
+                self.buffer = _deserialize_buffer(restored_extra["buffer_data"])
+                # Ensure buffer capacity matches current config
+                self.buffer.memory_size = self.args.ddqn_buffer_size
+                self.buffer.burn_in = self.args.ddqn_burn_in
+                print(
+                    f"[DDQN] replay buffer 已恢复: "
+                    f"{len(self.buffer.replay_memory)} entries",
+                    flush=True,
+                )
+            if restored_extra.get("episode_count", 0) > self.stats.episode_count:
+                print(
+                    f"[DDQN] episode_count 从 checkpoint 覆盖: "
+                    f"{self.stats.episode_count} → {restored_extra['episode_count']}",
+                    flush=True,
+                )
+                self.stats.episode_count = restored_extra["episode_count"]
+            if restored_extra.get("transition_count", 0) > self.transition_count:
+                self.transition_count = restored_extra["transition_count"]
+
         if self.stats.episode_count > 0:
             print(
                 f"[DDQN] 从 run 记录恢复: episodes={self.stats.episode_count}, "
@@ -96,6 +129,7 @@ class AsyncDDQNTrainer:
             initial_state_dict=self.learner.state_dict_cpu(),
             env_spec=self.env_spec,
             scenario_spec=self.scenario_spec,
+            initial_global_episode=self.stats.episode_count,
         )
         worker_pool.start()
 
@@ -120,54 +154,62 @@ class AsyncDDQNTrainer:
         evaluate_frequency,
         evaluate_n_iter,
     ):
-        while self.stats.episode_count < max_episodes and not self.solved:
-            self._drain_stats_queue(
-                worker_pool, evaluate_frequency, evaluate_n_iter
-            )
+        try:
+            while self.stats.episode_count < max_episodes and not self.solved:
+                self._drain_stats_queue(
+                    worker_pool, evaluate_frequency, evaluate_n_iter
+                )
 
-            try:
-                transition = worker_pool.transition_queue.get(timeout=1.0)
-            except queue.Empty:
-                if not self.worker_status.has_active_workers:
-                    raise RuntimeError("所有 DDQN worker 都已退出，训练终止")
-                continue
+                try:
+                    transition = worker_pool.transition_queue.get(timeout=1.0)
+                except queue.Empty:
+                    if not self.worker_status.has_active_workers:
+                        raise RuntimeError("所有 DDQN worker 都已退出，训练终止")
+                    continue
 
-            # Store contiguous copies to reduce memory fragmentation
-            (t_state, t_action, t_reward, t_done,
-             t_next_state, t_mask, t_next_mask) = transition
-            self.buffer.append(
-                np.ascontiguousarray(t_state),
-                t_action,
-                t_reward,
-                t_done,
-                np.ascontiguousarray(t_next_state),
-                np.ascontiguousarray(t_mask),
-                np.ascontiguousarray(t_next_mask),
-            )
-            del t_state, t_next_state, t_mask, t_next_mask, transition
-            self.transition_count += 1
+                # Store contiguous copies to reduce memory fragmentation
+                (t_state, t_action, t_reward, t_done,
+                 t_next_state, t_mask, t_next_mask) = transition
+                self.buffer.append(
+                    np.ascontiguousarray(t_state),
+                    t_action,
+                    t_reward,
+                    t_done,
+                    np.ascontiguousarray(t_next_state),
+                    np.ascontiguousarray(t_mask),
+                    np.ascontiguousarray(t_next_mask),
+                )
+                del t_state, t_next_state, t_mask, t_next_mask, transition
+                self.transition_count += 1
 
-            if self.buffer.burn_in_capacity() < 1:
-                continue
+                if self.buffer.burn_in_capacity() < 1:
+                    continue
 
-            if self.transition_count % network_update_frequency == 0:
-                loss_value = self.learner.update(self.buffer)
-                if loss_value is not None:
-                    self.stats.record_loss(loss_value)
-                    self.metric_emitter.emit_loss(
-                        loss_value=loss_value,
-                        transition_count=self.transition_count,
-                        episode_count=self.stats.episode_count,
+                if self.transition_count % network_update_frequency == 0:
+                    loss_value = self.learner.update(self.buffer)
+                    if loss_value is not None:
+                        self.stats.record_loss(loss_value)
+                        self.metric_emitter.emit_loss(
+                            loss_value=loss_value,
+                            transition_count=self.transition_count,
+                            episode_count=self.stats.episode_count,
+                        )
+
+                if self.transition_count % network_sync_frequency == 0:
+                    self.stats.record_sync()
+                    worker_pool.publish_weights(
+                        self.learner.sync_target(),
+                        global_episode=self.stats.episode_count,
                     )
-
-            if self.transition_count % network_sync_frequency == 0:
-                self.stats.record_sync()
-                worker_pool.publish_weights(self.learner.sync_target())
-
-        worker_pool.request_stop()
-        self._drain_stats_queue(worker_pool, evaluate_frequency, evaluate_n_iter)
-        self._emit_training_metrics(force=True)
-        self.reporter.print_finished(self.solved, self.stats.episode_count)
+        finally:
+            # Drain remaining episode messages BEFORE telling workers to stop,
+            # so in-flight episodes get their stats recorded.
+            self._drain_stats_queue(worker_pool, evaluate_frequency, evaluate_n_iter)
+            worker_pool.request_stop()
+            self._drain_stats_queue(worker_pool, evaluate_frequency, evaluate_n_iter)
+            # Always save the final plot, even if training was interrupted.
+            self._emit_training_metrics(force=True)
+            self.reporter.print_finished(self.solved, self.stats.episode_count)
 
     def _drain_stats_queue(self, worker_pool, evaluate_frequency, evaluate_n_iter):
         self.worker_status.check_processes(worker_pool.workers)
@@ -205,6 +247,12 @@ class AsyncDDQNTrainer:
                 self.checkpoint.save(
                     network=self.network,
                     tag=f"episode_{self.stats.episode_count}",
+                    extra={
+                        "optimizer_state_dict": self.learner.network.optimizer.state_dict(),
+                        "buffer": self.buffer,
+                        "episode_count": self.stats.episode_count,
+                        "transition_count": self.transition_count,
+                    },
                 )
                 self.reporter.print_checkpoint(self.stats.episode_count)
 

@@ -227,3 +227,33 @@ def _parse_int_list(raw_value):
     if not raw_value:
         return []
     return [int(part.strip()) for part in raw_value.split(",") if part.strip()]
+
+
+def terminate_pvz_processes(instances, auto_start: bool = True):
+    """终止训练启动的 PVZ 游戏进程。
+
+    仅在 auto_start 模式下执行（手动启动的进程由用户自行管理）。
+    """
+    if not auto_start or not instances:
+        return
+
+    killed = 0
+    for instance in instances:
+        pid = instance.get("pid")
+        if pid is None:
+            continue
+        try:
+            proc = psutil.Process(pid)
+            name = proc.name()
+            proc.terminate()
+            try:
+                proc.wait(timeout=3.0)
+            except psutil.TimeoutExpired:
+                proc.kill()
+            killed += 1
+            print(f"[清理] 已终止 PVZ 进程 PID={pid} ({name})", flush=True)
+        except (psutil.NoSuchProcess, psutil.AccessDenied, Exception):
+            pass  # already dead or inaccessible
+
+    if killed:
+        print(f"[清理] 共终止 {killed} 个 PVZ 进程", flush=True)

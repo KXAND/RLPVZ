@@ -224,8 +224,6 @@ class DDQNAlgorithm:
             max_episodes=context.args.ddqn_episodes,
             network_update_frequency=context.args.ddqn_update_freq,
             network_sync_frequency=context.args.ddqn_sync_freq,
-            evaluate_frequency=context.args.ddqn_eval_freq,
-            evaluate_n_iter=context.args.ddqn_eval_iters,
         )
 
 
